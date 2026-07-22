@@ -6,9 +6,11 @@ A personal data-infrastructure project: stream and fuse **Warframe gameplay tele
 
 Three interests colliding:
 
-- **Human sciences** — what does my brain actually do during a tense defense wave vs. cracking relics? EEG + game telemetry on one timeline can answer that.
+- **Human sciences** — what does my brain actually do during a long survival mission vs. cracking a void relic and getting a 1% chance gold reward? EEG + game telemetry on one timeline can answer that.
 - **Data infrastructure** — I work in cloud infrastructure and want real, hands-on depth in streaming systems: producers/consumers, at-least-once delivery, hot/cold paths, lakehouse patterns, replay/backfill.
 - **Warframe** — one of my favorite games ever, and (conveniently) it writes a continuously-updated engine log.
+
+> The following is written by AI
 
 ## How it works (phase 1)
 
@@ -40,19 +42,24 @@ The stacks share nothing but an SSM parameter (the data bucket's name), so the p
 ## Roadmap
 
 ### Phase 1 — Ingestion (current)
+
 The serverless streaming backbone described above.
+
 - **M1** — Go operator tails the real EE.log through a live play session (truncation-safe, offline, envelopes to stdout)
 - **M2** — Terraform stacks up; operator → Kinesis → Firehose → raw lines land in S3
 - **M3** — Hot-path Lambda parses into DynamoDB; events queryable seconds after they happen in-game
 - **M4** — Custom dashboard shows the live session feed
 
 ### Phase 2 — Lakehouse & replay
+
 Turn the raw S3 archive into a real analytical layer: Glue catalog, JSON→Parquet compaction, date/session partitioning, Athena. Build a **replay tool** to reprocess historical raw logs through new parser versions — the payoff of the "store raw everything" decision.
 
 ### Phase 3 — EEG fusion
+
 Second producer: EEG headset (hardware TBD). High-frequency continuous signal alongside sparse discrete game events — clock alignment across sources, windowed aggregation (e.g., 1s band-power buckets), and a dashboard timeline that overlays brain state on gameplay events.
 
 ### Phase 4 — Consumer upgrade (optional)
+
 Swap the hot-path Lambda for a real stream-processing consumer (Flink or KCL), spun up per-session to keep costs near zero. Same data, heavier machinery — a deliberate compare-and-contrast with the serverless consumer model.
 
 ## Notes & constraints

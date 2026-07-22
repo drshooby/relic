@@ -102,7 +102,7 @@ One JSON record per log line:
 Two stacks, decoupled by design (the point: destroy the pipeline freely, keep the data forever):
 
 - **`infra/data` (persistent, applied once, local state):**
-  - Data bucket: versioned, `prevent_destroy`, lifecycle to Glacier after ~90d.
+  - Data bucket: versioned, lifecycle to Glacier after ~90d. No hard delete protection — deletion is simply an owner-only action (see CLAUDE.md).
   - TF state bucket for other stacks.
   - SSM parameter `/relic/data-bucket-name`.
 - **`infra/pipeline` (ephemeral, S3 backend):**
