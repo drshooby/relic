@@ -10,8 +10,6 @@ Three interests colliding:
 - **Data infrastructure** — I work in cloud infrastructure and want real, hands-on depth in streaming systems: producers/consumers, at-least-once delivery, hot/cold paths, lakehouse patterns, replay/backfill.
 - **Warframe** — one of my favorite games ever, and (conveniently) it writes a continuously-updated engine log.
 
-> The following is written by AI
-
 ## How it works (phase 1)
 
 Warframe's PC client writes an engine log (`EE.log`, in `%LOCALAPPDATA%\Warframe\` — here, inside a CrossOver bottle on macOS) continuously during a session. A small Go **operator** tails it and ships every line, wrapped in a JSON envelope, to **Kinesis Data Streams**. The stream fans out two ways:
