@@ -1,0 +1,132 @@
+0.298 Sys [Diag]: Process Command-line: -windowMode:2 -shaderCache:1 -graphicsDriver:dx11 -gpuPreference:2 -cluster:public -language:en -clienttype:Steam
+0.298 Sys [Diag]: Build Label: 20.0.0.0.28 Retail Windows x64 [Stripped]
+0.301 Sys [Diag]: Build Unique ID: 1234567890
+0.303 Sys [Diag]: Windows user-name: testuser
+0.303 Sys [Diag]: Windows computer-name: testhost.example
+0.304 Sys [Diag]: Current time: Wed Jul 22 19:49:16 2026 [UTC: Thu Jul 23 00:49:16 2026]
+0.304 Sys [Diag]: Current directory: C:\users\Public\Desktop\steamapps\common\Warframe\Tools
+0.356 Sys [Diag]: Processor: Generic 8-Core TestCPU 3000MHz SSE/SSE2/SSE3/SSSE3/SSE41/SSE42/AVX/AVX2/F16C/FMA3/POPCNT/ABM/BMI1/BMI2/CLMUL F/M/S/EF/EM/UC: 0/0/0/0/0/0
+0.356 Sys [Diag]: Physical Memory: 8GB / 16GB free
+0.357 Sys [Diag]: Address Space: 128TB / 128TB free
+0.357 Sys [Diag]: No page file found!
+0.357 Sys [Diag]: Page size: 4KB (Granularity: 64KB)
+0.357 Sys [Diag]: Operating System: WINE 11.0
+0.357 Sys [Diag]: Mitigation Policies:
+0.357 Sys [Diag]: System Processes: 10
+0.357 Sys [Diag]: System Threads: 100
+0.357 Sys [Diag]: System Handles: 1,000
+0.357 Sys [Diag]: System GDI Objects: 0
+0.357 Sys [Diag]: System USER Objects: 0
+0.357 Sys [Diag]: System Up-Time: 1d 0h 0m 0s
+0.358 Sys [Diag]: Free Disk Space on C: 10,000,000,000 bytes
+0.358 Sys [Diag]: Found Monitor: (0, 0) - (1920, 1080) : 1920x1080
+0.358 Sys [Diag]: Process is DPI-aware
+0.358 Sys [Diag]: Clock frequency: 10,000,000Hz
+0.435 Gfx [Info]: Private shader options need 22 bits
+0.439 Sys [Info]: CancelJobs batchcount 0
+0.552 Sys [Info]: Loading packages took 0.0ms
+0.552 Sys [Info]: Redirecting package load to: C:\users\testuser\AppData\Local\Warframe\Editor.cfg
+0.554 Sys [Info]: Cache languages enabled: _en
+0.555 Sys [Error]: WINHTTP_OPTION_IPV6_FAST_FALLBACK() failed (ERROR_WINHTTP_INVALID_OPTION)
+0.558 Sys [Info]: Scanning C:\users\Public\Desktop\steamapps\common\Warframe\Cache.Windows\ for cache blocks...
+0.561 Sys [Info]: Found 99 cache blocks...
+0.590 Sys [Info]: Downloading cache manifest index...
+1.115 Sys [Info]: Loaded TOC for Windows/H.Misc (took 276ms, loaded 246718 entries, found 170 deleted)
+1.117 Sys [Info]: Used shared /H.Cache.bin (571B Copy: 575us Write: 277ms Latency: 527ms)
+1.132 Sys [Info]: Budget overrun commiting write of H.Misc/H.Cache.bin (3.36 ms)
+1.164 Sys [Info]: Loaded TOC for Windows/H.Font (took 12.6ms, loaded 5395 entries, found 27 deleted)
+1.174 Sys [Info]: Loaded TOC for Windows/B.Font (took 6.71ms, loaded 5385 entries, found 57 deleted)
+1.279 Sys [Info]: Loaded TOC for Windows/B.Misc (took 103ms, loaded 151652 entries, found 49 deleted)
+1.308 Sys [Info]: Loaded TOC for Windows/H.AnimRetarget (took 26.6ms, loaded 11434 entries, found 98 deleted)
+1.325 Sys [Info]: Loaded TOC for Windows/H.CharacterCodesCache (took 21us, loaded 1 entries, found 1 deleted)
+1.337 Sys [Info]: Loaded TOC for Windows/B.AnimRetarget (took 12.6ms, loaded 9438 entries, found 46 deleted)
+1.346 Sys [Info]: Loaded TOC for Windows/H.Emblem (took 63us, loaded 1 entries, found 0 deleted)
+1.346 Sys [Info]: Loaded TOC for Windows/B.CharacterCodesCache (took 6us, loaded 1 entries, found 0 deleted)
+1.349 Sys [Info]: Loaded TOC for Windows/B.Emblem (took 8us, loaded 1 entries, found 0 deleted)
+1.393 Sys [Info]: Loaded TOC for Windows/H.LightMap (took 18.0ms, loaded 60108 entries, found 7 deleted)
+1.619 Sys [Info]: Cache manifest hash 7fwjVVacxcBzO-xahK2RZg
+1.696 Sys [Info]: Loaded TOC for Windows/H.Texture (took 77.1ms, loaded 67893 entries, found 11 deleted)
+1.711 Sys [Info]: Loaded TOC for Windows/B.LightMap (took 14.8ms, loaded 57227 entries, found 14 deleted)
+1.769 Sys [Info]: Loaded TOC for Windows/B.Texture (took 53.3ms, loaded 53001 entries, found 17 deleted)
+1.834 Sys [Info]: Initialize dictionary: 1048576b
+2.376 Sys [Info]: Loaded package cache in 0.67s (Parse: 0.55s)
+2.380 Sys [Info]: Loaded TOC for Windows/B.VideoTexture (took 52us, loaded 1 entries, found 0 deleted)
+2.380 Sys [Info]: Loaded TOC for Windows/H.VideoTexture (took 60us, loaded 47 entries, found 0 deleted)
+2.643 Sys [Info]: Loaded deps cache in 265ms
+2.701 Sys [Info]: ResourceMgr release queue size=128
+2.701 Net [Info]: RMI::Initialize - Methods: 433 Hash: 11111111111111111111
+2.703 Sys [Info]: Redirecting package load to: C:\users\testuser\AppData\Local\Warframe\EE.cfg
+2.704 Sys [Diag]: Engine config profile: /Configs/EE.cfg/Windows_Config
+2.704 Sys [Info]: JobMgr: 10 threads (+4 low)
+2.701 Net [Info]: RMI::Initialize - Methods: 433 Hash: 11111111111111111111
+2.761 Script [Info]: ScriptMgr::Initialize() 0 bytes, 0 allocs
+3.459 Net [Info]: Local address: 0.0.0.0
+3.459 Net [Info]: UPnP enabled.
+3.459 Net [Info]: NAT-PMP enabled.
+3.461 Net [Info]: Initializing UPnP
+3.470 Net [Info]: Getting INATEventManager
+3.470 Net [Info]: INATEventManager not found
+3.474 Net [Info]: Checking 1 gateways for NAT-PMP support
+6.170 Script [Info]: UISTYLE: initialized 1
+6.170 Script [Info]: UIBACKGROUND: initialized 1
+6.170 Script [Info]: UISOUNDS: initialized 1
+6.598 Game [Info]: ServerFramework:OpenLevel - /Lotus/Levels/Proc/PlayerShip/AeAu.lp
+6.611 Net [Info]: Local binding: localhost:4950
+6.611 Net [Info]: UDP socket created: localhost:4950, thread send: 1
+6.611 Net [Info]: Listening: localhost:4950
+6.611 Net [Info]: Oodle version: 2.9.0
+6.611 Net [Info]: Oodle Net version: 2.9.0
+6.612 Net [Info]:  ReplicationMgr::Initialize(1), init count=1, 0x000000001485E730, master: 1
+6.612 Game [Info]: SetCurrentServerLayerIndex(4294967295)
+6.628 Net [Info]:  ReplicationMgr::Initialize(1), init count=1, 0x0000000010E82520, master: 1
+6.631 Game [Info]: SetCurrentServerLayerIndex(4294967295)
+6.632 Net [Info]: Local binding: localhost:4955
+6.632 Net [Info]: UDP socket created: localhost:4955, thread send: 1
+6.632 Net [Info]: Oodle version: 2.9.0
+6.632 Net [Info]: Oodle Net version: 2.9.0
+6.633 Game [Info]: HostMigration::ResetOldServerConnection()
+6.633 Net [Info]:  ReplicationMgr::Initialize(1), init count=1, 0x00000000153542C0, master: 0
+6.634 Net [Info]: Created virtual connection for: 0.0.0.0:4950 [handle: 0]
+6.760 Script [Info]: Progress.lua: Initialize
+6.761 Script [Info]: Progress.lua: UISTYLE: _G.CurrStyle invalid, updating theme
+6.761 Script [Info]: Progress.lua: UISTYLE: overlayMgr valid
+6.761 Script [Info]: Progress.lua: UISTYLE: style valid, _G.CurrStyle assigned
+6.797 Script [Info]: Progress.lua: ShowTip()
+6.797 Script [Info]: Progress.lua: GenericTip
+6.859 Net [Info]: Created virtual connection for: 0.0.0.0:4955 [handle: 0]
+6.860 Net [Info]: NetDriver::SetConnectionTimeout setting connection 0 timeout to 20 * 1
+6.904 Net [Info]: NetDriver::SetConnectionTimeout setting connection 0 timeout to 7.5 * 1
+6.905 Game [Info]: Server::LoadClient: Context objects:
+6.905 Game [Info]: /Lotus/Types/GameRules/AlternateLotusFrontEndGameRules
+6.905 Game [Info]: Level=/Lotus/Levels/Proc/PlayerShip/AeAu.lp
+6.905 Net [Info]: NetDriver::SetConnectionTimeout setting connection 0 timeout to 20 * 1
+7.063 Script [Info]: ScriptMgr::ResetGlobals()
+7.069 Net [Info]:  ReplicationMgr::Initialize(1), init count=1, 0x00000000153542C0, master: 0
+7.070 Net [Info]: NetDriver::SetConnectionTimeout setting connection 0 timeout to 20 * 1
+7.228 Net [Info]: NAT-PMP request opcode 0 timed out.
+7.228 Net [Info]: No NAT-PMP gateway found
+11.066 Script [Info]: Background.lua: UISTYLE: Style changed callback registered
+11.066 Script [Info]: Background.lua: No game rules, early out
+11.066 Script [Info]: Background.lua: Background.lua: Initialize
+11.066 Game [Info]: Region index=1, layer=4294967295
+11.066 Game [Info]: SynchronizingState::Enter
+11.068 Net [Info]: GameRulesImpl - changing state from SS_INVALID to SS_WAITING_TO_START
+11.069 Game [Info]: LevelLoader, added batch /Lotus/Levels/Proc/PlayerShip/AeAu.lp
+11.070 Game [Info]: LevelLoader, InitBatch
+11.070 Game [Info]: Level loader: LS_COMPLETE -> LS_PREPARE
+11.070 Game [Info]: Level loader: LS_PREPARE -> LS_CREATE_EX
+11.092 Script [Info]: Background.lua: UISTYLE: Style changed callback called
+11.092 Script [Info]: Background.lua: UISTYLE: _G.CurrStyle invalid, updating theme
+11.092 Script [Info]: Background.lua: UISTYLE: overlayMgr valid
+UploadChallengeProgress: uploading...
+OnUploadChallengeProgressResults:mRecentSeasonChallengeCompletions = 0, mRecentChallengeCompletions=0, mSavingRecentSeasonChallengeCompletions=0, mSavingRecentChallengeCompletions=0
+Unknown property: Tutorial
+Unknown property: Races
+OnUploadChallengeProgressResults:mRecentSeasonChallengeCompletions = 0, mRecentChallengeCompletions=0, mSavingRecentSeasonChallengeCompletions=0, mSavingRecentChallengeCompletions=0
+OnUploadChallengeProgressResults:mRecentSeasonChallengeCompletions = 0, mRecentChallengeCompletions=0, mSavingRecentSeasonChallengeCompletions=0, mSavingRecentChallengeCompletions=0
+OnUploadChallengeProgressResults:mRecentSeasonChallengeCompletions = 0, mRecentChallengeCompletions=0, mSavingRecentSeasonChallengeCompletions=0, mSavingRecentChallengeCompletions=0
+{
+    "missionType" : "MT_TAU_WAR",
+    "faction" : "FC_OROKIN",
+    "gameRules" : "/Lotus/Types/GameRules/LotusTauWarGameRules",
+    "uniqueName" : "",
