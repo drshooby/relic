@@ -6,7 +6,15 @@ Personal data-infra project: stream Warframe `EE.log` (+ EEG later) → Kinesis 
 
 ## PII — treat game logs as sensitive
 
-`EE.log` headers contain **real PII: the owner's IP address, email, and machine names**. Rules, no exceptions:
+`EE.log` contains **real PII: IP addresses and machine names**. Verified against a real session (the community wiki also warns about an email in the header — this client logs none, so don't repeat that claim):
+
+- The owner's **public IP**, the LAN address, and — matchmaking is peer-to-peer — **squadmates' IPs**. These appear *mid-session* in `Net` and `Game` lines, not only in the header, so header-only scanning is not enough.
+- Machine name and Windows username in the header.
+- Squad display names, player ids, and clan ids are treated as gameplay data, not identity, and are kept.
+
+The operator redacts IP addresses at the source (`operator/cmd/tail/redact.go`) so nothing downstream ever stores one. That is a deliberate, documented exception to "cold path stores raw lines" — the invariant exists to keep history replayable, and no parser needs an IP to reconstruct a mission.
+
+Rules, no exceptions:
 
 - **Never commit raw log content.** Any fixture derived from a real log must be sanitized first (scrub IP/email/hostnames) and reviewed before `git add`.
 - **Never paste raw log lines/headers** into PRs, issues, artifacts, web content, or any external service.

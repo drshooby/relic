@@ -14,7 +14,7 @@ Tail Warframe's `EE.log` on the local Mac, stream every line to AWS in near-real
 - Line format: `<seconds-since-launch> <subsystem> [<level>]: <message>`. Some entries continue across multiple lines (continuation lines have no leading timestamp).
 - The header logs absolute launch time (`Current time: ... [UTC: ...]`) → every relative timestamp is convertible to UTC.
 - The file is written continuously during play (engine buffering can lag ~10s) and is **truncated on every game launch**.
-- The header contains PII (IP address, email).
+- PII is **IP addresses**, and they are not confined to the header. Verified against a real session: the owner's public address, the LAN address, and squadmates' addresses (matchmaking is peer-to-peer) appear throughout, in `Net` and `Game` lines. No email is logged, despite the community wiki's warning — that claim shaped the original draft of this spec and did not survive contact with real data.
 
 ## Constraints
 
@@ -43,6 +43,7 @@ A local daemon that tails EE.log and ships lines to Kinesis. Deliberately dumb �
 
 Responsibilities:
 - Tail the file read-only; never interfere with the game's writes.
+- **Redact IP addresses before the line is wrapped.** The one transformation the operator performs, and a deliberate exception to "cold path stores raw lines": the invariant exists so history stays replayable, and no parser needs an IP to reconstruct a mission. Doing it here means no address ever reaches Kinesis or S3, so there is nothing to clean up later. Ports and player ids are kept. A dotted quad in version context (`PhysX Core Version: 4.1.1.0`) is left alone — it is indistinguishable from an address by pattern, so context decides, and the failure mode is a mangled version string rather than a leaked address.
 - Detect truncation (size shrink) → new session: mint a new `session_id` (UUID), reset `seq`, re-parse the header for the wall-clock anchor.
 - Wrap each line in the envelope (below); batch into `PutRecords` (up to 500 records / call), partition key = `session_id`.
 - On Kinesis failure: exponential backoff + spool batches to local disk; drain spool on recovery. Never lose lines, never block on the network.
@@ -76,7 +77,7 @@ One JSON record per log line:
 
 ### 4. Cold path (Firehose → S3)
 
-- Firehose attached to the stream; buffer ~60s / 1MB; gzip; **zero transformation**.
+- Firehose attached to the stream; buffer ~60s / 1MB; gzip; **zero transformation** (the operator's IP redaction is the only change ever applied to a line, and it happens before the stream).
 - S3 layout (Hive-style, Athena-ready):
   `raw/source=warframe.ee_log/dt=YYYY-MM-DD/session_id=<uuid>/<firehose-object>.gz`
   (dt from `wall_time_utc`, via Firehose dynamic partitioning on the envelope.)
@@ -86,6 +87,11 @@ One JSON record per log line:
 
 - Event source mapping on the stream (batch size ~100, `bisect_batch_on_function_error`, SQS DLQ, `maximum_retry_attempts` bounded so a poison record can't wedge the shard).
 - Parses `raw` → `{event_type, subsystem, level, attrs}`. Starting vocabulary: `session.start`, `mission.start`, `mission.end`, and `log.line` as the catch-all — **a bad line is data, not an error**; the parser vocabulary grows over time (and phase 2's replay tool re-derives history with each new parser version).
+- Observed from a real session, for whoever builds the parser:
+  - Void relic runs live in the `VoidProjections:` and `Projection*.lua` lines. Rewards are stated outright — `VoidProjections: <player_id> gets reward /Lotus/StoreItems/.../VorunaPrimeHelmetBlueprint` — so they do not have to be inferred from icon loads.
+  - Item paths use **legacy internal names**: the engine says `Helmet` where the UI says *Neuroptics*. A path → display-name mapping is needed, and it cannot be built by transliterating the path.
+  - `Script [Info]: EndOfMatch.lua:` carries mission outcome (`Mission Succeeded`), reward tags (`NotifyTagMultiple(MISSION_REWARD_CREDITS): 4400`), and squad roster lines.
+  - `Sys [Info]: Weapon in slot <SLOT> with ID <id> has gained <n> XP` is the per-weapon XP breakdown.
 - Writes:
   - `relic-events` table — PK `session_id`, SK `seq` (zero-padded string), attrs + envelope fields, TTL ~24h. Overwrite-on-duplicate = idempotent under at-least-once delivery.
   - `relic-sessions` table — one item per session (`session_id`, `started_at`, `last_seen_at`, counts), TTL ~7d, so the dashboard can find the active/recent sessions cheaply.

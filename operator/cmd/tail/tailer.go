@@ -196,7 +196,9 @@ var (
 const wfTimeLayout = "Mon Jan 2 15:04:05 2006"
 
 func (t *Tailer) emit(line []byte) error {
-	s := string(line)
+	// Addresses are removed here, before the line is wrapped, so nothing
+	// downstream -- including the S3 archive -- ever holds one.
+	s := redactLine(string(line))
 	t.noteHeader(s)
 
 	e := Envelope{

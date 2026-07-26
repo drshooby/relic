@@ -83,8 +83,9 @@ One envelope per line (newline-delimited JSON):
   events land on one timeline in phase 3.
 - Continuation lines (stack traces, which carry no timestamp of their own) are
   emitted as-is and inherit the preceding line's clock.
-- `raw` is the line exactly as written, minus the line ending. Nothing is
-  dropped or rewritten — the archive downstream is meant to be replayable.
+- `raw` is the line as written, minus the line ending and any IP address (see
+  below). Nothing else is dropped or rewritten — the archive downstream is meant
+  to be replayable.
 - `v` is the envelope version. Changing the shape means bumping it, and old
   data has to stay readable.
 
@@ -104,6 +105,23 @@ arrives, so a truncated line is never emitted.
 **Reading is read-only.** The game owns the file; the operator opens it for
 reading and never locks, moves, or writes to it.
 
+**IP addresses are stripped before anything is emitted.** `EE.log` records the
+owner's public address, the LAN address, and squadmates' addresses (matchmaking
+is peer-to-peer) — in `Net` *and* `Game` lines, throughout the session, not just
+the header. `redactLine` replaces them with `<ip>` in [redact.go](cmd/tail/redact.go),
+so no address ever reaches the stream or the archive. Ports, player ids, and
+display names are kept: they are gameplay data.
+
+Dropping whole subsystems was considered and rejected — `Net` alone is 7.8% of
+the log and would still miss the addresses in `Game` lines, and a subsystem
+denylist fails silently when a game update starts logging addresses somewhere
+new. Matching the address itself keeps every line and its signal.
+
+One deliberate false negative: `Phys [Info]: PhysX Core Version: 4.1.1.0` is a
+syntactically valid address, so it is recognised by context (the word "version")
+rather than by pattern. Anything without that context is redacted, so an
+unrecognised version line gets mangled rather than an address getting through.
+
 ## Performance
 
 The workload is small — Warframe writes on the order of 10–100 lines/sec — so
@@ -112,17 +130,25 @@ the operator is not close to being the bottleneck. Baseline on an M4 Pro
 
 | Benchmark | Result | Meaning |
 |-----------|--------|---------|
-| `WithJSONSink` | 32ms / 50k lines | ~1.5M lines/sec through the full path, envelope encoding included |
-| `TailerThroughput` | 9.6ms / 50k lines | the tailer alone, without JSON |
-| `IdlePoll` | ~1.9µs, 3 allocs | one poll when nothing was written |
+| `WithJSONSink` | 71ms / 50k lines | ~700k lines/sec through the full path, encoding and redaction included |
+| `TailerThroughput` | 20ms / 50k lines | the tailer alone, without JSON |
+| `IdlePoll` | ~4.0µs, 3 allocs | one poll when nothing was written |
 
-A whole 4-hour session (~34k lines) is ~22ms of work. Idle polling twice a
-second costs roughly 0.0004% of one core, which is the number that matters:
+Replaying a real ~11k-line session takes **~73ms** end to end. Idle polling twice
+a second costs roughly 0.0008% of one core, which is the number that matters:
 the game must never feel this process.
+
+The synthetic benchmark is pessimistic about redaction — every generated line
+contains a dotted `/Lotus/...` path, so almost none take the no-dots fast path,
+whereas a real log is mostly short lines that exit immediately.
 
 Known inefficiency, deliberately left alone: ~8 allocations per line (copying
 each line out of the buffer, the two pointer fields in the envelope, and
 `encoding/json` reflection). At this volume it buys nothing to fix.
+
+IP redaction costs roughly 2x on the synthetic benchmark. Adding it naively cost
+**15x** until a dot-counting fast path was put in front of the regexes — worth
+knowing before adding any other per-line work.
 
 Run them with:
 
@@ -150,6 +176,14 @@ session — identifiers, hostnames, and machine details are replaced with
 placeholders. Its CRLF line endings are deliberate (`EE.log` is written by a
 Windows binary) and asserted by a test, since normalizing them would silently
 stop covering that path.
+
+The last few lines are **synthetic**, not captured: real address-bearing line
+shapes (`NAT bound`, `HandleSquadMessage`, `Registered to hub`, `public
+address`, and the `PhysX Core Version` false-positive case) rewritten with
+[RFC 5737](https://datatracker.ietf.org/doc/html/rfc5737) documentation
+addresses — `192.0.2.x`, `198.51.100.x`, `203.0.113.x` — which are reserved for
+examples and route nowhere. Without them the redaction test would pass against
+a completely broken redactor, since the captured portion contains no addresses.
 
 Never commit raw log content: real `EE.log` headers carry the machine's IP and
 hostname. Any new fixture gets scrubbed and reviewed first — see

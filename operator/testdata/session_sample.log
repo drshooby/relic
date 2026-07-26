@@ -130,3 +130,8 @@ OnUploadChallengeProgressResults:mRecentSeasonChallengeCompletions = 0, mRecentC
     "faction" : "FC_OROKIN",
     "gameRules" : "/Lotus/Types/GameRules/LotusTauWarGameRules",
     "uniqueName" : "",
+543.288 Net [Info]: NAT bound for client to 198.51.100.7:4955
+544.100 Game [Info]: HandleSquadMessage from 203.0.113.9:4950 JOIN (host: 0)
+544.200 Game [Info]: Registered to hub: 192.0.2.5:6951, hub index = 11
+544.300 Net [Info]: Client test reply from 203.0.113.9:4950 (390ms, 17L), public address 198.51.100.7:4955
+544.400 Phys [Info]: PhysX Core Version: 4.1.1.0

@@ -62,6 +62,7 @@ Swap the hot-path Lambda for a real stream-processing consumer (Flink or KCL), s
 
 ## Notes & constraints
 
-- EE.log facts (verified locally): truncated on every game launch; writes can lag ~10s (engine buffering); header contains the absolute launch time, which anchors every relative timestamp to UTC — the key to cross-source fusion later.
-- The log header contains PII (IP, email). Data lands only in a private bucket; committed test fixtures are sanitized.
+- EE.log facts (verified against a real session, which corrected several claims the community wiki makes): truncated on every game launch; writes can lag ~10s (engine buffering); header contains the absolute launch time, which anchors every relative timestamp to UTC — the key to cross-source fusion later.
+- **PII is IP addresses, not email.** The wiki warns about an email in the header; this client logs none. It does log the owner's public address, the LAN address, and — because matchmaking is peer-to-peer — squadmates' addresses, and they appear mid-session in `Net` *and* `Game` lines, not just the header. The operator strips them at the source, so nothing downstream ever stores one. Squad display names and player ids are kept: they are gameplay data, not identity.
+- Data lands only in a private bucket; committed test fixtures are sanitized.
 - Languages: Go (operator), Python (stream processing), TypeScript (dashboard) — right tool per layer.
