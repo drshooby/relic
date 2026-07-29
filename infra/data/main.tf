@@ -19,3 +19,5 @@ provider "aws" {
 resource "random_id" "bucket_suffix" {
   byte_length = 4
 }
+
+data "aws_caller_identity" "current" {}
