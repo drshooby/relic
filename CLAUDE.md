@@ -2,7 +2,7 @@
 
 Personal data-infra project: stream Warframe `EE.log` (+ EEG later) → Kinesis → S3/DynamoDB → live dashboard. Read [README.md](README.md) for the story and roadmap; the authoritative phase-1 design is [docs/superpowers/specs/2026-07-21-relic-phase1-design.md](docs/superpowers/specs/2026-07-21-relic-phase1-design.md).
 
-**Status:** Phase 1, pre-code. Spec written; awaiting owner review, then an implementation plan for M1 (Go operator). Do not start implementing without a reviewed spec + plan.
+**Status:** Phase 1, M2 in progress. M1 (Go operator) is built — tails `EE.log`, redacts IPs, emits versioned envelopes to stdout. Both Terraform stacks apply cleanly and the Kinesis → Firehose → S3 path is wired, but **nothing has been verified end-to-end**: no record has flowed through the stream yet. The operator does not write to Kinesis (still stdout only). Next: manual `put-record` smoke test, then the operator's Kinesis producer.
 
 ## PII — treat game logs as sensitive
 
@@ -36,9 +36,13 @@ Rules, no exceptions:
 
 - Two stacks: `infra/data` (persistent; holds the data bucket, TF state bucket, SSM param) and `infra/pipeline` (ephemeral — destroyed whenever idle; the owner does this habitually).
 - Deleting the data bucket or its contents is an **owner-only decision**. Agents must never destroy `infra/data`, empty the data bucket, or weaken its protections on their own — only on David's explicit instruction. (No hard `prevent_destroy` required; the guardrail is "only David deletes data," not "data is undeletable.")
-- Destroy of the pipeline must wait for Firehose to flush (~2 min after last activity) — use `scripts/down.sh`, not raw `terraform destroy`.
+- Destroy of the pipeline must wait for Firehose to flush (~2 min after last activity) before `terraform destroy`, or the last buffered records are lost.
+- The stacks share exactly one string: the SSM parameter `/relic/data/bucket_name`. The pipeline reads the bucket as a **data source**, never a managed resource — an `import` block or `resource "aws_s3_bucket"` in `infra/pipeline` would put the persistent bucket in the destroyable stack. `infra/data` must be applied first or the pipeline's data source lookup fails.
 - All AWS resources go through Terraform — no console/CLI-created resources.
 - Cost discipline: no always-on compute, no VPC/NAT, nothing that bills while idle. If a change adds standing cost, flag it to the owner before applying.
+- **The Kinesis shard is the one thing that bills while idle** — provisioned mode, 1 shard, $0.015/shard-hour (~$11/month) from apply until destroy, regardless of traffic. This is why the pipeline gets torn down between sessions.
+- IAM: any `Principal` that is an AWS service (`firehose.amazonaws.com`, `lambda.amazonaws.com`, …) is global, not account-scoped — it must be narrowed with an `aws:SourceAccount`/`aws:SourceArn` condition on the trust policy, and `source_account` on any `aws_lambda_permission`. See the confused-deputy entry in [README.md](README.md#lessons-learned).
+- Run `terraform validate` before claiming a stack works; it catches bad references without touching AWS. Note it does **not** contact AWS, so a clean validate says nothing about whether data actually flows.
 - Never commit: `terraform.tfvars`, state files, AWS credentials, real log data.
 
 ## Conventions
