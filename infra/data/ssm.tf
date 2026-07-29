@@ -13,10 +13,3 @@ resource "aws_ssm_parameter" "data_bucket_name" {
   type        = "String"
   value       = aws_s3_bucket.data_bucket.bucket
 }
-
-resource "aws_ssm_parameter" "data_bucket_arn" {
-  name        = "/relic/data/bucket_arn"
-  description = "ARN of the persistent relic data bucket, for pipeline IAM policies"
-  type        = "String"
-  value       = aws_s3_bucket.data_bucket.arn
-}
