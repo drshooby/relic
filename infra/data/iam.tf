@@ -1,5 +1,3 @@
-data "aws_caller_identity" "current" {}
-
 # No principals are defined in this stack.
 #
 # The only thing that writes to the data bucket is Firehose, and its delivery
