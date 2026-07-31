@@ -27,6 +27,7 @@ func buildPath() (string, error) {
 func main() {
 	pathFlag := flag.String("path", "", "path to EE.log (defaults to the CrossOver bottle location)")
 	once := flag.Bool("once", false, "read what is currently in the file, emit it, and exit")
+	sinkFlag := flag.String("sink", "stdout", "where to flush output to")
 	flag.Parse()
 
 	path := *pathFlag
@@ -43,7 +44,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	sink := NewStdoutSink(os.Stdout)
+	var sink Sink
+	if *sinkFlag == "kinesis" {
+		sink = NewKinesisSink(os.Stdout)
+	} else {
+		sink = NewStdoutSink(os.Stdout)
+	}
 	tailer, err := NewTailer(path, sink)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
