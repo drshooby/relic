@@ -15,6 +15,9 @@ import (
 
 const logBottlePathWithoutHome = "Library/Application Support/CrossOver/Bottles/Steam Library/drive_c/users/crossover/AppData/Local/Warframe/EE.log"
 
+// shutdownTimeout bounds the final drain and flush after the signal arrives.
+const shutdownTimeout = 10 * time.Second
+
 func isValidPath(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && fi.Mode().IsRegular()
@@ -79,18 +82,12 @@ func main() {
 		runErr = tailer.Run(ctx)
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-
-	// Drain whatever arrived between the last tick and shutdown, then flush the
-	// writer. Without this, buffered envelopes are lost on exit.
-	if runErr == nil {
-		runErr = tailer.Poll(shutdownCtx)
-	}
-
-	if err := sink.Flush(shutdownCtx); err != nil && runErr == nil {
+	if err := tailer.Shutdown(shutdownCtx); err != nil && runErr == nil {
 		runErr = err
 	}
+
 	if runErr != nil {
 		fmt.Fprintln(os.Stderr, runErr)
 		os.Exit(1)

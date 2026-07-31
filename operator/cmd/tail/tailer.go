@@ -136,7 +136,9 @@ func (t *Tailer) Poll(ctx context.Context) error {
 	}
 }
 
-// Run polls until ctx-less shutdown via the returned stop channel.
+// Run polls on a ticker until ctx is cancelled. Cancellation is the expected
+// way to stop, so it is reported as success; only a real read or sink failure
+// comes back as an error.
 func (t *Tailer) Run(ctx context.Context) error {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -146,10 +148,25 @@ func (t *Tailer) Run(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			if err := t.Poll(ctx); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return nil
+				}
 				return err
 			}
 		}
 	}
+}
+
+// Shutdown drains what arrived since the last tick and flushes the sink. It
+// takes its own context because the one that drove Run is already cancelled by
+// the time shutdown starts -- reusing it would cancel the final drain before it
+// emitted anything, losing the tail of the session.
+func (t *Tailer) Shutdown(ctx context.Context) error {
+	err := t.Poll(ctx)
+	if ferr := t.sink.Flush(ctx); err == nil {
+		err = ferr // flush still runs even if the drain failed
+	}
+	return err
 }
 
 func (t *Tailer) fill() (int, error) {
@@ -174,6 +191,11 @@ func (t *Tailer) fill() (int, error) {
 
 func (t *Tailer) drain(ctx context.Context) error {
 	for {
+		// Emit can be a network round-trip. Checking here means shutdown is
+		// bounded by one in-flight call rather than by the whole backlog.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		rel := bytes.IndexByte(t.buf[t.start:], '\n')
 		if rel < 0 {
 			return nil // remainder is a partial line, hold it
