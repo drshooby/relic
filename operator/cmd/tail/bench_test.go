@@ -12,6 +12,7 @@ import (
 type discardSink struct{ n int }
 
 func (d *discardSink) Emit(Envelope) error { d.n++; return nil }
+func (d *discardSink) Flush() error        { return nil }
 
 func benchLog(b *testing.B, lines int) string {
 	b.Helper()

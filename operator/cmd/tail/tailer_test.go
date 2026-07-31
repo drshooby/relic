@@ -21,6 +21,8 @@ func (c *collectSink) Emit(e Envelope) error {
 	return nil
 }
 
+func (c *collectSink) Flush() error { return nil }
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -357,3 +359,5 @@ func (e *envSink) Emit(env Envelope) error {
 	e.envs = append(e.envs, env)
 	return nil
 }
+
+func (e *envSink) Flush() error { return nil }
