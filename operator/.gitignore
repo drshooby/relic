@@ -1,5 +1,5 @@
 # Compiled binary from `go build -o tail ./cmd/tail/`
-tail
+/tail
 
 # Captured sessions from `./tail > session.ndjson` — these hold real log
 # content and must never be committed (see ../CLAUDE.md).
