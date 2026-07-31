@@ -32,6 +32,7 @@ type Envelope struct {
 // implementation without the tailer knowing the difference.
 type Sink interface {
 	Emit(Envelope) error
+	Flush() error
 }
 
 // StdoutSink writes newline-delimited JSON.
@@ -45,10 +46,28 @@ func NewStdoutSink(w io.Writer) *StdoutSink {
 	return &StdoutSink{w: bw, enc: json.NewEncoder(bw)}
 }
 
-func (s *StdoutSink) Emit(e Envelope) error {
-	return s.enc.Encode(e)
+func (ss *StdoutSink) Emit(e Envelope) error {
+	return ss.enc.Encode(e)
 }
 
-func (s *StdoutSink) Flush() error {
-	return s.w.Flush()
+func (ss *StdoutSink) Flush() error {
+	return ss.w.Flush()
+}
+
+type KinesisSink struct {
+	w   *bufio.Writer
+	enc *json.Encoder
+}
+
+func NewKinesisSink(w io.Writer) *KinesisSink {
+	bw := bufio.NewWriter(w)
+	return &KinesisSink{w: bw, enc: json.NewEncoder(bw)}
+}
+
+func (ks *KinesisSink) Emit(e Envelope) error {
+	return ks.enc.Encode(e)
+}
+
+func (ks *KinesisSink) Flush() error {
+	return ks.w.Flush()
 }
