@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -351,6 +353,52 @@ func TestStdoutSinkFlushEmitsAllLines(t *testing.T) {
 	got := strings.Count(strings.TrimSpace(out.String()), "\n") + 1
 	if want := 5; got != want {
 		t.Errorf("flushed %d envelopes, want %d", got, want)
+	}
+}
+
+// cancellingSink cancels the context partway through a backlog, standing in for
+// a Ctrl-C landing mid-drain while a slow sink works through buffered lines.
+type cancellingSink struct {
+	cancel  context.CancelFunc
+	after   int
+	emitted int
+}
+
+func (c *cancellingSink) Emit(ctx context.Context, _ Envelope) error {
+	c.emitted++
+	if c.emitted == c.after {
+		c.cancel()
+	}
+	return nil
+}
+
+func (c *cancellingSink) Flush(context.Context) error { return nil }
+
+// A cancelled context must stop the drain loop. With a remote sink each Emit is
+// a network call, so without this check Ctrl-C waits out the whole backlog one
+// request at a time instead of returning promptly.
+func TestPollStopsOnCancelledContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "EE.log")
+	var b strings.Builder
+	b.WriteString(testHeader)
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&b, "%d.000 Script [Info]: line %d\n", i+1, i)
+	}
+	writeFile(t, path, b.String())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink := &cancellingSink{cancel: cancel, after: 10}
+	tl := newTestTailer(t, path, sink)
+
+	err := tl.Poll(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Poll error = %v, want context.Canceled", err)
+	}
+	// The header is 3 lines, so a full drain would be 103. Stopping near the
+	// cancellation point is the point; the exact count is not load-bearing.
+	if sink.emitted > 20 {
+		t.Errorf("emitted %d envelopes after cancellation, want to stop near 10", sink.emitted)
 	}
 }
 
