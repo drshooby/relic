@@ -1,3 +1,13 @@
+resource "aws_cloudwatch_log_group" "firehose" {
+  name              = "/aws/kinesisfirehose/relic-kinesis-firehose-stream"
+  retention_in_days = 7
+}
+
+resource "aws_cloudwatch_log_stream" "firehose_s3_delivery" {
+  name           = "S3Delivery"
+  log_group_name = aws_cloudwatch_log_group.firehose.name
+}
+
 resource "aws_kinesis_firehose_delivery_stream" "extended_s3_stream" {
   name        = "relic-kinesis-firehose-stream"
   destination = "extended_s3"
@@ -11,5 +21,13 @@ resource "aws_kinesis_firehose_delivery_stream" "extended_s3_stream" {
     role_arn           = aws_iam_role.firehose_role.arn
     bucket_arn         = data.aws_s3_bucket.data_bucket.arn
     buffering_interval = 60
+
+    # Without this, delivery failures (e.g. AccessDenied) are silent:
+    # Firehose retries for up to 24h and surfaces nothing.
+    cloudwatch_logging_options {
+      enabled         = true
+      log_group_name  = aws_cloudwatch_log_group.firehose.name
+      log_stream_name = aws_cloudwatch_log_stream.firehose_s3_delivery.name
+    }
   }
 }

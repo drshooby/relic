@@ -70,3 +70,29 @@ resource "aws_iam_role_policy_attachment" "kinesis_read_attach" {
   role       = aws_iam_role.firehose_role.name
   policy_arn = aws_iam_policy.kinesis_read.arn
 }
+
+resource "aws_iam_role_policy_attachment" "firehose_s3_delivery_attach" {
+  role       = aws_iam_role.firehose_role.name
+  policy_arn = aws_iam_policy.firehose_s3_delivery.arn
+}
+
+resource "aws_iam_policy" "firehose_logging" {
+  name        = "relic-firehose-logging-policy"
+  description = "Allows Amazon Data Firehose to write delivery errors to CloudWatch Logs"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["logs:PutLogEvents"]
+        Resource = ["${aws_cloudwatch_log_group.firehose.arn}:*"]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "firehose_logging_attach" {
+  role       = aws_iam_role.firehose_role.name
+  policy_arn = aws_iam_policy.firehose_logging.arn
+}
