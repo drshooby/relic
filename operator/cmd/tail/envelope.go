@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis/types"
 )
 
 // envelopeVersion is bumped whenever the envelope's shape changes. Old raw data
@@ -62,6 +63,8 @@ func (sink *StdoutSink) Flush(ctx context.Context) error {
 type KinesisSink struct {
 	client     *kinesis.Client
 	streamName string
+	buf        []types.PutRecordsRequestEntry
+	bufBytes   int
 }
 
 func NewKinesisSink(cfg aws.Config, streamName string) *KinesisSink {
@@ -70,25 +73,39 @@ func NewKinesisSink(cfg aws.Config, streamName string) *KinesisSink {
 }
 
 func (sink *KinesisSink) Emit(ctx context.Context, e Envelope) error {
-	var record kinesis.PutRecordInput
 	jsonData, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("failed to marshal envelope json: %w", err)
 	}
-	record.Data = jsonData
-	record.StreamName = aws.String(sink.streamName)
-	record.PartitionKey = aws.String(e.SessionID)
 
-	putCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
+	sink.buf = append(sink.buf, types.PutRecordsRequestEntry{
+		Data:         jsonData,
+		PartitionKey: aws.String(e.SessionID),
+	})
 
-	_, err = sink.client.PutRecord(putCtx, &record)
-	if err != nil {
-		return fmt.Errorf("failed to put record in kinesis: %w", err)
+	sink.bufBytes += len(jsonData)
+
+	if len(sink.buf) >= 500 || sink.bufBytes >= 4<<20 {
+		return sink.Flush(ctx)
 	}
 	return nil
 }
 
 func (sink *KinesisSink) Flush(ctx context.Context) error {
+	if len(sink.buf) == 0 {
+		return nil
+	}
+	putCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err := sink.client.PutRecords(putCtx, &kinesis.PutRecordsInput{
+		StreamName: aws.String(sink.streamName),
+		Records:    sink.buf,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to put record in kinesis: %w", err)
+	}
+
+	sink.buf, sink.bufBytes = sink.buf[:0], 0
 	return nil
 }
