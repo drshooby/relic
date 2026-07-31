@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -112,7 +113,7 @@ func (t *Tailer) Close() error {
 
 // Poll reads whatever is currently available and emits any complete lines. It
 // is safe to call on an idle file; it simply emits nothing.
-func (t *Tailer) Poll() error {
+func (t *Tailer) Poll(ctx context.Context) error {
 	if err := t.checkRotate(); err != nil {
 		return err
 	}
@@ -125,7 +126,7 @@ func (t *Tailer) Poll() error {
 			return err // includes errLineTooLong, which must not be swallowed
 		}
 		if n > 0 {
-			if derr := t.drain(); derr != nil {
+			if derr := t.drain(ctx); derr != nil {
 				return derr
 			}
 		}
@@ -136,15 +137,15 @@ func (t *Tailer) Poll() error {
 }
 
 // Run polls until ctx-less shutdown via the returned stop channel.
-func (t *Tailer) Run(stop <-chan struct{}) error {
+func (t *Tailer) Run(ctx context.Context) error {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-stop:
+		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := t.Poll(); err != nil {
+			if err := t.Poll(ctx); err != nil {
 				return err
 			}
 		}
@@ -171,7 +172,7 @@ func (t *Tailer) fill() (int, error) {
 	return n, err
 }
 
-func (t *Tailer) drain() error {
+func (t *Tailer) drain(ctx context.Context) error {
 	for {
 		rel := bytes.IndexByte(t.buf[t.start:], '\n')
 		if rel < 0 {
@@ -179,7 +180,7 @@ func (t *Tailer) drain() error {
 		}
 		line := t.buf[t.start : t.start+rel]
 		line = bytes.TrimSuffix(line, []byte("\r"))
-		if err := t.emit(line); err != nil {
+		if err := t.emit(ctx, line); err != nil {
 			return err
 		}
 		t.start += rel + 1
@@ -195,7 +196,7 @@ var (
 
 const wfTimeLayout = "Mon Jan 2 15:04:05 2006"
 
-func (t *Tailer) emit(line []byte) error {
+func (t *Tailer) emit(ctx context.Context, line []byte) error {
 	// Addresses are removed here, before the line is wrapped, so nothing
 	// downstream -- including the S3 archive -- ever holds one.
 	s := redactLine(string(line))
@@ -225,7 +226,7 @@ func (t *Tailer) emit(line []byte) error {
 	e.SessionEpochUTC = t.epoch
 
 	t.seq++
-	return t.sink.Emit(e)
+	return t.sink.Emit(ctx, e)
 }
 
 // noteHeader picks the session's wall-clock epoch out of the header. Every

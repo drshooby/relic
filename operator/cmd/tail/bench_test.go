@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,8 +12,8 @@ import (
 // discardSink measures the tailer itself, without JSON encoding cost.
 type discardSink struct{ n int }
 
-func (d *discardSink) Emit(Envelope) error { d.n++; return nil }
-func (d *discardSink) Flush() error        { return nil }
+func (d *discardSink) Emit(context.Context, Envelope) error { d.n++; return nil }
+func (d *discardSink) Flush(context.Context) error          { return nil }
 
 func benchLog(b *testing.B, lines int) string {
 	b.Helper()
@@ -39,7 +40,7 @@ func BenchmarkTailerThroughput(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := tl.Poll(); err != nil {
+		if err := tl.Poll(context.Background()); err != nil {
 			b.Fatal(err)
 		}
 		tl.Close()
@@ -58,10 +59,10 @@ func BenchmarkWithJSONSink(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := tl.Poll(); err != nil {
+		if err := tl.Poll(context.Background()); err != nil {
 			b.Fatal(err)
 		}
-		sink.Flush()
+		sink.Flush(context.Background())
 		tl.Close()
 	}
 }
@@ -76,12 +77,12 @@ func BenchmarkIdlePoll(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer tl.Close()
-	if err := tl.Poll(); err != nil { // drain first
+	if err := tl.Poll(context.Background()); err != nil { // drain first
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := tl.Poll(); err != nil {
+		if err := tl.Poll(context.Background()); err != nil {
 			b.Fatal(err)
 		}
 	}

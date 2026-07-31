@@ -2,9 +2,14 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 )
 
 // envelopeVersion is bumped whenever the envelope's shape changes. Old raw data
@@ -31,8 +36,8 @@ type Envelope struct {
 // Sink consumes envelopes. M1 ships them to stdout; M2 swaps in a Kinesis
 // implementation without the tailer knowing the difference.
 type Sink interface {
-	Emit(Envelope) error
-	Flush() error
+	Emit(context.Context, Envelope) error
+	Flush(context.Context) error
 }
 
 // StdoutSink writes newline-delimited JSON.
@@ -46,28 +51,44 @@ func NewStdoutSink(w io.Writer) *StdoutSink {
 	return &StdoutSink{w: bw, enc: json.NewEncoder(bw)}
 }
 
-func (ss *StdoutSink) Emit(e Envelope) error {
-	return ss.enc.Encode(e)
+func (sink *StdoutSink) Emit(ctx context.Context, e Envelope) error {
+	return sink.enc.Encode(e)
 }
 
-func (ss *StdoutSink) Flush() error {
-	return ss.w.Flush()
+func (sink *StdoutSink) Flush(ctx context.Context) error {
+	return sink.w.Flush()
 }
 
 type KinesisSink struct {
-	w   *bufio.Writer
-	enc *json.Encoder
+	client     *kinesis.Client
+	streamName string
 }
 
-func NewKinesisSink(w io.Writer) *KinesisSink {
-	bw := bufio.NewWriter(w)
-	return &KinesisSink{w: bw, enc: json.NewEncoder(bw)}
+func NewKinesisSink(cfg aws.Config, streamName string) *KinesisSink {
+	client := kinesis.NewFromConfig(cfg)
+	return &KinesisSink{client: client, streamName: streamName}
 }
 
-func (ks *KinesisSink) Emit(e Envelope) error {
-	return ks.enc.Encode(e)
+func (sink *KinesisSink) Emit(ctx context.Context, e Envelope) error {
+	var record kinesis.PutRecordInput
+	jsonData, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("failed to marshal envelope json: %w", err)
+	}
+	record.Data = jsonData
+	record.StreamName = aws.String(sink.streamName)
+	record.PartitionKey = aws.String(e.SessionID)
+
+	putCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_, err = sink.client.PutRecord(putCtx, &record)
+	if err != nil {
+		return fmt.Errorf("failed to put record in kinesis: %w", err)
+	}
+	return nil
 }
 
-func (ks *KinesisSink) Flush() error {
-	return ks.w.Flush()
+func (sink *KinesisSink) Flush(ctx context.Context) error {
+	return nil
 }

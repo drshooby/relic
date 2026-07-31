@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/config"
 )
 
 const logBottlePathWithoutHome = "Library/Application Support/CrossOver/Bottles/Steam Library/drive_c/users/crossover/AppData/Local/Warframe/EE.log"
@@ -44,12 +48,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config %s\n", err)
+		os.Exit(1)
+	}
+
 	var sink Sink
 	if *sinkFlag == "kinesis" {
-		sink = NewKinesisSink(os.Stdout)
+		sink = NewKinesisSink(cfg, "relic-events-stream")
 	} else {
 		sink = NewStdoutSink(os.Stdout)
 	}
+
 	tailer, err := NewTailer(path, sink)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -57,28 +68,27 @@ func main() {
 	}
 	defer tailer.Close()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	var runErr error
 	if *once {
-		runErr = tailer.Poll()
+		runErr = tailer.Poll(ctx)
 	} else {
-		stop := make(chan struct{})
-		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
-		go func() {
-			<-sigs
-			close(stop)
-		}()
-
 		fmt.Fprintf(os.Stderr, "tailing %s\n", path)
-		runErr = tailer.Run(stop)
+		runErr = tailer.Run(ctx)
 	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	// Drain whatever arrived between the last tick and shutdown, then flush the
 	// writer. Without this, buffered envelopes are lost on exit.
 	if runErr == nil {
-		runErr = tailer.Poll()
+		runErr = tailer.Poll(shutdownCtx)
 	}
-	if err := sink.Flush(); err != nil && runErr == nil {
+
+	if err := sink.Flush(shutdownCtx); err != nil && runErr == nil {
 		runErr = err
 	}
 	if runErr != nil {

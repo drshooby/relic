@@ -8,8 +8,9 @@ rarely has to change. See the
 [phase 1 design](../docs/superpowers/specs/2026-07-21-relic-phase1-design.md)
 for where it sits in the pipeline.
 
-**Status:** M1 complete — tails the live log and writes envelopes to stdout.
-Kinesis delivery arrives at M2.
+**Status:** M1 complete. M2 in progress — `-sink=kinesis` produces to the stream
+with one `PutRecord` per line. Batching and the offline spool are not built yet
+(see [Next: batching](#next-batching)).
 
 ## Prerequisites
 
@@ -48,6 +49,12 @@ Stop it with Ctrl-C; buffered envelopes are flushed on the way out.
 |------|---------|
 | `-path` | Tail a different file (a captured log, a test fixture) |
 | `-once` | Emit what is currently in the file and exit, instead of following it |
+| `-sink` | `stdout` (default) or `kinesis` |
+
+`-sink=kinesis` needs the pipeline stack applied and AWS credentials in the
+environment; it reads the standard AWS config chain. Because the Kinesis shard
+bills while it exists, the stack is normally destroyed between sessions — so
+`stdout` is the everyday mode and `kinesis` is opt-in.
 
 `-once` is what replays a finite file, and is the seed of the end-to-end replay
 harness the design calls for:
@@ -164,6 +171,46 @@ The real M2 performance questions are not CPU. They are how long to buffer
 before a `PutRecords` call (latency vs. API cost, 500 records / 5MB per call,
 1,000 records/sec per shard) and what happens to the local spool when the
 network drops mid-session.
+
+## Next: batching
+
+`KinesisSink.Emit` currently makes one `PutRecord` call per log line. That was
+the deliberate first step — it proves credentials, region, partition key, and
+the whole path to S3 without any buffering logic to debug at the same time — but
+it is not what ships.
+
+At 10–100 lines/sec, one synchronous HTTPS round trip per line means the tailer
+blocks on the network for every line it reads, and each call carries its own
+request overhead against the shard's 1,000 records/sec limit. `PutRecords` takes
+up to 500 records (5MB) per call.
+
+What has to be decided:
+
+- **Flush trigger.** Record count, payload bytes, or a time bound — in practice
+  all three, whichever comes first. A time bound is what keeps the last few
+  lines of an idle session from sitting in the buffer indefinitely.
+- **Partial failure.** `PutRecords` returns `FailedRecordCount` with a
+  per-record status; the call can succeed overall while individual records fail
+  (usually `ProvisionedThroughputExceededException`). Only the failed subset may
+  be retried — resending the whole batch duplicates records that already
+  landed. Duplicates are survivable, since `(session_id, seq)` makes them
+  idempotent, but manufacturing them is still wrong.
+- **Backpressure.** What happens when the buffer fills faster than it drains.
+  Blocking the tailer risks falling behind the log; dropping loses data.
+- **Durability.** Today an `Emit` error propagates up and stops the tailer, so a
+  transient network blip ends the session capture. The design calls for
+  exponential backoff plus a local disk spool drained on recovery — never lose
+  lines, never block on the network.
+
+`Flush` becomes load-bearing at that point: with a buffer, records exist that
+the tailer considers emitted but that have not left the machine, and only the
+shutdown flush saves them. The context plumbing for that is already in place —
+`main` cancels on signal and hands the final drain and flush a separate 10s
+budget derived from `context.Background()`, so cleanup still has a live context
+after everything else has been cancelled.
+
+`IdlePoll` is the benchmark to watch: batching must not turn an idle poll into
+network work.
 
 ## Tests
 

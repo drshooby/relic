@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -90,7 +91,7 @@ func TestEmittedEnvelopesCarryNoIPs(t *testing.T) {
 
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -123,7 +124,7 @@ func TestFixtureReplayLeaksNoIPs(t *testing.T) {
 	path := writeTempLog(t, string(fixture))
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 

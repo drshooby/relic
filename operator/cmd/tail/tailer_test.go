@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,13 +16,13 @@ type collectSink struct {
 	sessions []string
 }
 
-func (c *collectSink) Emit(e Envelope) error {
+func (c *collectSink) Emit(_ context.Context, e Envelope) error {
 	c.lines = append(c.lines, e.Raw)
 	c.sessions = append(c.sessions, e.SessionID)
 	return nil
 }
 
-func (c *collectSink) Flush() error { return nil }
+func (c *collectSink) Flush(context.Context) error { return nil }
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -62,7 +63,7 @@ func TestEmitsCompleteLines(t *testing.T) {
 
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,13 +83,13 @@ func TestHoldsPartialLineUntilComplete(t *testing.T) {
 
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	before := len(sink.lines)
 
 	appendFile(t, path, "3.000 Script [Info]: half")
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(sink.lines) != before {
@@ -96,7 +97,7 @@ func TestHoldsPartialLineUntilComplete(t *testing.T) {
 	}
 
 	appendFile(t, path, "-written\n")
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := sink.lines[len(sink.lines)-1], "3.000 Script [Info]: half-written"; got != want {
@@ -113,7 +114,7 @@ func TestDetectsInPlaceTruncation(t *testing.T) {
 
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	firstSession := sink.sessions[len(sink.sessions)-1]
@@ -124,7 +125,7 @@ func TestDetectsInPlaceTruncation(t *testing.T) {
 		"0.200 Sys [Diag]: Current time: Wed Jul 22 21:00:00 2026 [UTC: Thu Jul 23 02:00:00 2026]\n"
 	writeFile(t, path, newHeader+"1.000 Script [Info]: new session line\n"+strings.Repeat("2.000 Sys [Info]: filler\n", 50))
 
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -158,7 +159,7 @@ func TestFollowsNewInodeAtSamePath(t *testing.T) {
 
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -166,7 +167,7 @@ func TestFollowsNewInodeAtSamePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, path, testHeader+"1.000 Script [Info]: second\n")
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,7 +184,7 @@ func TestGrowsBufferForLongLine(t *testing.T) {
 
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -200,7 +201,7 @@ func TestRejectsLineBeyondMax(t *testing.T) {
 
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	err := tl.Poll()
+	err := tl.Poll(context.Background())
 	if err == nil {
 		t.Fatal("expected an error for an over-long line")
 	}
@@ -216,7 +217,7 @@ func TestEnvelopeCarriesWallClockAndSeq(t *testing.T) {
 
 	sink := &envSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -244,7 +245,7 @@ func TestContinuationLineInheritsClock(t *testing.T) {
 
 	sink := &envSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -274,7 +275,7 @@ func TestStripsCarriageReturns(t *testing.T) {
 
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -296,7 +297,7 @@ func TestReplaysRealFixture(t *testing.T) {
 
 	sink := &collectSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -320,7 +321,7 @@ func TestFirstEnvelopesCarrySessionEpoch(t *testing.T) {
 
 	sink := &envSink{}
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -340,10 +341,10 @@ func TestStdoutSinkFlushEmitsAllLines(t *testing.T) {
 	var out strings.Builder
 	sink := NewStdoutSink(&out)
 	tl := newTestTailer(t, path, sink)
-	if err := tl.Poll(); err != nil {
+	if err := tl.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := sink.Flush(); err != nil {
+	if err := sink.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -355,9 +356,9 @@ func TestStdoutSinkFlushEmitsAllLines(t *testing.T) {
 
 type envSink struct{ envs []Envelope }
 
-func (e *envSink) Emit(env Envelope) error {
+func (e *envSink) Emit(_ context.Context, env Envelope) error {
 	e.envs = append(e.envs, env)
 	return nil
 }
 
-func (e *envSink) Flush() error { return nil }
+func (e *envSink) Flush(context.Context) error { return nil }

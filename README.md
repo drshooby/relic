@@ -59,7 +59,7 @@ The Kinesis shard is the only thing that bills while idle — $0.015/shard-hour,
 The serverless streaming backbone described above.
 
 - **M1** ✅ — Go operator tails the real EE.log through a live play session (truncation-safe, offline, envelopes to stdout, IPs redacted at the source)
-- **M2** _(in progress)_ — Terraform stacks up; operator → Kinesis → Firehose → raw lines land in S3. Both stacks apply and the Kinesis → Firehose → S3 path is wired; not yet verified end-to-end, and the operator still writes to stdout rather than Kinesis.
+- **M2** _(in progress)_ — Terraform stacks up; operator → Kinesis → Firehose → raw lines land in S3. Kinesis → Firehose → S3 is verified end-to-end: a `put-record` payload arrives in S3 byte-for-byte under a Hive-partitioned prefix. The operator has a `KinesisSink` behind a `-sink` flag and can produce to the stream; a full run against a live session has not happened yet. Next: batch with `PutRecords` instead of one call per line.
 - **M3** — Hot-path Lambda parses into DynamoDB; events queryable seconds after they happen in-game
 - **M4** — Custom dashboard shows the live session feed
 
