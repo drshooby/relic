@@ -22,6 +22,14 @@ resource "aws_kinesis_firehose_delivery_stream" "extended_s3_stream" {
     bucket_arn         = data.aws_s3_bucket.data_bucket.arn
     buffering_interval = 60
 
+    # Hive-style partitioning so Athena/Glue can discover partitions
+    # automatically in phase 2. Firehose's default (2026/07/31/00/) is
+    # positional and needs manual ALTER TABLE ADD PARTITION per prefix.
+    # Timestamps are UTC and refer to Firehose ingestion time, not the
+    # in-game event time parsed from the log line.
+    prefix              = "raw/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/"
+    error_output_prefix = "errors/!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"
+
     # Without this, delivery failures (e.g. AccessDenied) are silent:
     # Firehose retries for up to 24h and surfaces nothing.
     cloudwatch_logging_options {
