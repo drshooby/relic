@@ -1,5 +1,7 @@
 resource "aws_s3_bucket" "data_bucket" {
   bucket = "relic-data-bucket-${random_id.bucket_suffix.hex}"
+  // turn off when done with dev
+  force_destroy = true
 }
 
 # Raw EE.log lines are PII-adjacent and land only here. Never widen this.
