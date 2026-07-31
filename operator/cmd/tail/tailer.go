@@ -153,6 +153,9 @@ func (t *Tailer) Run(ctx context.Context) error {
 				}
 				return err
 			}
+			if err := t.sink.Flush(ctx); err != nil {
+				return err
+			}
 		}
 	}
 }
