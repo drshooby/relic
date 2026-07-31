@@ -110,6 +110,29 @@ Lambda raises the stakes for a different reason than I expected. `iam:PassRole` 
 
 General rule: **a service principal in any policy — trust or resource — is an open door until a condition narrows it.**
 
+### Ask which component owns durability
+
+First end-to-end smoke test: two records `put-record`'d into Kinesis, nothing in S3. My read was "Firehose never received them." Wrong, and the wrong question.
+
+The cause was mundane — `iam.tf` defined an S3 delivery policy and never attached it to the Firehose role. The Kinesis read policy had an `aws_iam_role_policy_attachment`; the S3 one didn't. An unattached policy is a perfectly valid resource, so `terraform validate` and `plan` are both silent about it. Two symptoms made it hard to see:
+
+- **Firehose fails silently by design.** On `AccessDenied` it neither errors nor drops — it retries for up to 24h. Correct for a transient S3 blip, but a permanent permission error looks identical to nothing happening. Fixing that is a config flag: `cloudwatch_logging_options` turns silence into a readable `AccessDenied`. It's off by default, which means the default posture is undebuggable.
+- **Records were still readable in the stream after Firehose had read them.** I took that as proof Firehose hadn't consumed anything. It proves nothing — reads don't consume in Kinesis.
+
+That last one is the actual lesson. Firehose *had* received both records, buffered them, and was retrying. But its buffer is short-lived working memory — no API to inspect it, no dead-letter queue here, and a bounded retry window after which the data is simply gone. Firehose was never where the records were safe.
+
+Kinesis was. 24h retention, replicated across three AZs, and a consumer reading a record doesn't remove it — each consumer tracks its own position, so many can read the same stream independently. Firehose is just one consumer with one cursor.
+
+```
+Kinesis (durable, 24h)  ← the records were always here
+   └─▶ Firehose (buffered, retrying, nothing durable)
+          └─▶ S3  ✗ AccessDenied
+```
+
+So S3 was empty while Kinesis looked healthy, and no data was ever lost — the retry loop was stalled, not failing. Attaching the policy inside the retention window let the original records land on their own; no third `put-record` needed. At-least-once delivery recovering on its own, which is the same property `(session_id, seq)` exists to make safe.
+
+General rule: **in a streaming pipeline, ask which component owns durability.** Every stage downstream of it is reprocessable as long as you're inside the retention window; every stage upstream of an empty destination is worth checking before assuming data is gone. That's the same property Phase 2's replay tool depends on, and the reason the cold path stores raw lines. A day later, both the Kinesis retention and the Firehose retry window would have expired and the records really would have been gone.
+
 ## Notes & constraints
 
 - EE.log facts (verified against a real session, which corrected several claims the community wiki makes): truncated on every game launch; writes can lag ~10s (engine buffering); header contains the absolute launch time, which anchors every relative timestamp to UTC — the key to cross-source fusion later.
