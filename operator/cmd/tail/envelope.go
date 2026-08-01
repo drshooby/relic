@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
 // envelopeVersion is bumped whenever the envelope's shape changes. Old raw data
@@ -20,6 +21,25 @@ import (
 const envelopeVersion = 1
 
 const sourceWarframe = "warframe.ee_log"
+
+// defaultBaseBackoff is the first retry's wait; each attempt doubles it.
+const defaultBaseBackoff = 100 * time.Millisecond
+
+// PutRecords caps a single call at 500 records and 5MB. The byte ceiling is set
+// below the hard limit because the API counts the partition key toward it too.
+const (
+	maxRecordsPerCall = 500
+	maxBytesPerCall   = 4 << 20
+)
+
+// maxBufferedRecords bounds how far behind the sink may fall while Kinesis is
+// refusing records. At a few hundred bytes per line this is roughly 15MB, or
+// minutes of gameplay. Past it the operator exits rather than growing without
+// limit or silently dropping lines -- the archive is the replayable source of
+// truth, so losing records unnoticed is the worst available outcome.
+const maxBufferedRecords = 50_000
+
+const streamNameParam = "/relic/pipeline/kinesis_stream_name"
 
 // Envelope wraps a single raw log line with the metadata that only the producer
 // can know: which session it belongs to, its order within that session, and the
@@ -69,9 +89,6 @@ type kinesisAPI interface {
 	PutRecords(context.Context, *kinesis.PutRecordsInput, ...func(*kinesis.Options)) (*kinesis.PutRecordsOutput, error)
 }
 
-// defaultBaseBackoff is the first retry's wait; each attempt doubles it.
-const defaultBaseBackoff = 100 * time.Millisecond
-
 type KinesisSink struct {
 	client      kinesisAPI
 	streamName  string
@@ -80,28 +97,31 @@ type KinesisSink struct {
 	baseBackoff time.Duration
 }
 
-func NewKinesisSink(cfg aws.Config, streamName string) *KinesisSink {
-	client := kinesis.NewFromConfig(cfg)
-	return &KinesisSink{
-		client:      client,
-		streamName:  streamName,
-		baseBackoff: defaultBaseBackoff,
+func getSSMStreamName(ctx context.Context, cfg aws.Config) (string, error) {
+	out, err := ssm.NewFromConfig(cfg).GetParameter(ctx, &ssm.GetParameterInput{
+		Name: aws.String(streamNameParam),
+	})
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", streamNameParam, err)
 	}
+	return aws.ToString(out.Parameter.Value), nil
 }
 
-// PutRecords caps a single call at 500 records and 5MB. The byte ceiling is set
-// below the hard limit because the API counts the partition key toward it too.
-const (
-	maxRecordsPerCall = 500
-	maxBytesPerCall   = 4 << 20
-)
+func NewKinesisSink(ctx context.Context, cfg aws.Config) (*KinesisSink, error) {
+	streamName, err := getSSMStreamName(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if streamName == "" {
+		return nil, fmt.Errorf("%s is empty; is infra/pipeline applied?", streamNameParam)
+	}
 
-// maxBufferedRecords bounds how far behind the sink may fall while Kinesis is
-// refusing records. At a few hundred bytes per line this is roughly 15MB, or
-// minutes of gameplay. Past it the operator exits rather than growing without
-// limit or silently dropping lines -- the archive is the replayable source of
-// truth, so losing records unnoticed is the worst available outcome.
-const maxBufferedRecords = 50_000
+	return &KinesisSink{
+		client:      kinesis.NewFromConfig(cfg),
+		streamName:  streamName,
+		baseBackoff: defaultBaseBackoff,
+	}, nil
+}
 
 func (sink *KinesisSink) Emit(ctx context.Context, e Envelope) error {
 	jsonData, err := json.Marshal(e)
