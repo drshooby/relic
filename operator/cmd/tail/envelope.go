@@ -129,6 +129,11 @@ func (sink *KinesisSink) Emit(ctx context.Context, e Envelope) error {
 		return fmt.Errorf("failed to marshal envelope json: %w", err)
 	}
 
+	// Firehose concatenates record payloads verbatim, so the newline has to ride
+	// along with each record. Without it the S3 object arrives as one unbroken
+	// line and no newline-delimited-JSON reader can parse the archive.
+	jsonData = append(jsonData, '\n')
+
 	sink.buf = append(sink.buf, types.PutRecordsRequestEntry{
 		Data:         jsonData,
 		PartitionKey: aws.String(e.SessionID),

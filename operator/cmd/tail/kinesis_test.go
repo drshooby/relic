@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -341,5 +343,37 @@ func TestRunSurvivesFlushFailure(t *testing.T) {
 	}
 	if sink.flushes < 2 {
 		t.Errorf("Run stopped flushing after a failure: %d flushes", sink.flushes)
+	}
+}
+
+// Firehose concatenates record payloads verbatim, so each record has to carry
+// its own newline or the S3 object arrives as one unbroken line -- unreadable
+// to Athena, Glue, and every other newline-delimited-JSON reader.
+func TestEmittedRecordsAreNewlineDelimited(t *testing.T) {
+	f := &fakeKinesis{results: []fakeResult{{}}}
+	sink := newTestSink(f)
+
+	for i := range 3 {
+		if err := sink.Emit(context.Background(), envelopeN(i)); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+	}
+	if err := sink.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	var joined []byte
+	for _, r := range f.calls[0] {
+		joined = append(joined, r.Data...)
+	}
+	if got := bytes.Count(joined, []byte("\n")); got != 3 {
+		t.Errorf("concatenated payloads hold %d newlines, want 3", got)
+	}
+	// Concatenated records must parse as one JSON document per line.
+	for i, line := range bytes.Split(bytes.TrimRight(joined, "\n"), []byte("\n")) {
+		var e Envelope
+		if err := json.Unmarshal(line, &e); err != nil {
+			t.Errorf("line %d does not parse as an envelope: %v", i, err)
+		}
 	}
 }
