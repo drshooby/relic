@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
+	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -72,6 +74,20 @@ func NewKinesisSink(cfg aws.Config, streamName string) *KinesisSink {
 	return &KinesisSink{client: client, streamName: streamName}
 }
 
+// PutRecords caps a single call at 500 records and 5MB. The byte ceiling is set
+// below the hard limit because the API counts the partition key toward it too.
+const (
+	maxRecordsPerCall = 500
+	maxBytesPerCall   = 4 << 20
+)
+
+// maxBufferedRecords bounds how far behind the sink may fall while Kinesis is
+// refusing records. At a few hundred bytes per line this is roughly 15MB, or
+// minutes of gameplay. Past it the operator exits rather than growing without
+// limit or silently dropping lines -- the archive is the replayable source of
+// truth, so losing records unnoticed is the worst available outcome.
+const maxBufferedRecords = 50_000
+
 func (sink *KinesisSink) Emit(ctx context.Context, e Envelope) error {
 	jsonData, err := json.Marshal(e)
 	if err != nil {
@@ -85,8 +101,17 @@ func (sink *KinesisSink) Emit(ctx context.Context, e Envelope) error {
 
 	sink.bufBytes += len(jsonData)
 
-	if len(sink.buf) >= 500 || sink.bufBytes >= 4<<20 {
-		return sink.Flush(ctx)
+	if len(sink.buf) >= maxRecordsPerCall || sink.bufBytes >= maxBytesPerCall {
+		// A failed flush leaves the batch buffered for the next attempt. Kinesis
+		// being briefly unavailable is normal backpressure and must not kill the
+		// tailer, so the error is reported and swallowed here.
+		if err := sink.Flush(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "kinesis flush failed, %d records buffered: %v\n", len(sink.buf), err)
+		}
+	}
+
+	if len(sink.buf) > maxBufferedRecords {
+		return fmt.Errorf("kinesis sink backed up: %d records buffered, giving up", len(sink.buf))
 	}
 	return nil
 }
@@ -95,17 +120,49 @@ func (sink *KinesisSink) Flush(ctx context.Context) error {
 	if len(sink.buf) == 0 {
 		return nil
 	}
-	putCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	_, err := sink.client.PutRecords(putCtx, &kinesis.PutRecordsInput{
-		StreamName: aws.String(sink.streamName),
-		Records:    sink.buf,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to put record in kinesis: %w", err)
+	if err := sink.fire(ctx); err != nil {
+		return err
 	}
-
 	sink.buf, sink.bufBytes = sink.buf[:0], 0
 	return nil
+}
+
+const maxAttempts = 5
+
+func (sink *KinesisSink) fire(ctx context.Context) error {
+	pending := sink.buf
+	for attempt := range maxAttempts {
+		if attempt > 0 {
+			backoff := time.Duration(1<<attempt) * 100 * time.Millisecond
+			jitter := time.Duration(rand.Int63n(int64(backoff)))
+			select {
+			case <-time.After(backoff + jitter):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		putCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		out, err := sink.client.PutRecords(putCtx, &kinesis.PutRecordsInput{
+			StreamName: aws.String(sink.streamName),
+			Records:    pending,
+		})
+		cancel()
+		if err != nil {
+			return fmt.Errorf("put records: %w", err)
+		}
+		if aws.ToInt32(out.FailedRecordCount) == 0 {
+			return nil
+		}
+
+		next := pending[:0:0] // shorthand for making a new slice
+		for i, r := range out.Records {
+			if r.ErrorCode != nil {
+				next = append(next, pending[i])
+			}
+		}
+		pending = next
+	}
+
+	return fmt.Errorf("%d records still failing after %d attempts", len(pending), maxAttempts)
 }
