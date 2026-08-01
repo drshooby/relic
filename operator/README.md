@@ -8,9 +8,11 @@ rarely has to change. See the
 [phase 1 design](../docs/superpowers/specs/2026-07-21-relic-phase1-design.md)
 for where it sits in the pipeline.
 
-**Status:** M1 complete. M2 in progress — `-sink=kinesis` produces to the stream
-with one `PutRecord` per line. Batching and the offline spool are not built yet
-(see [Next: batching](#next-batching)).
+**Status:** M1 and M2 complete. `-sink=kinesis` batches envelopes to the stream
+with `PutRecords`, retries partial failures, and has been verified end to end —
+an 11,629-line session landed in S3 intact. The spec's disk spool was
+deliberately cut; see
+[Deviation from the spec](#deviation-from-the-spec-no-disk-spool).
 
 ## Prerequisites
 
@@ -52,9 +54,13 @@ Stop it with Ctrl-C; buffered envelopes are flushed on the way out.
 | `-sink` | `stdout` (default) or `kinesis` |
 
 `-sink=kinesis` needs the pipeline stack applied and AWS credentials in the
-environment; it reads the standard AWS config chain. Because the Kinesis shard
-bills while it exists, the stack is normally destroyed between sessions — so
-`stdout` is the everyday mode and `kinesis` is opt-in.
+environment; it reads the standard AWS config chain. The stream name comes from
+the SSM parameter `/relic/pipeline/kinesis_stream_name`, so the operator also
+needs `ssm:GetParameter` on it — with the pipeline destroyed that lookup fails
+and the operator exits at startup rather than buffering toward a stream that is
+not there. Because the Kinesis shard bills while it exists, the stack is
+normally destroyed between sessions — so `stdout` is the everyday mode and
+`kinesis` is opt-in.
 
 `-once` is what replays a finite file, and is the seed of the end-to-end replay
 harness the design calls for:
@@ -163,54 +169,88 @@ Run them with:
 go test ./cmd/tail/ -run XXX -bench . -benchmem
 ```
 
-`IdlePoll` is the regression guard worth watching when the Kinesis sink lands
-at M2 — if it starts doing per-poll work (a network call, a stat storm), that
-number moves first.
+`IdlePoll` is the regression guard worth watching now that the Kinesis sink has
+landed — a flush on an empty buffer returns immediately, but if an idle poll
+ever starts doing network work, that number moves first.
 
-The real M2 performance questions are not CPU. They are how long to buffer
-before a `PutRecords` call (latency vs. API cost, 500 records / 5MB per call,
-1,000 records/sec per shard) and what happens to the local spool when the
-network drops mid-session.
+The remaining performance question is not CPU. It is what happens to the local
+spool when the network drops mid-session, which is still unbuilt.
 
-## Next: batching
+## Batching and delivery
 
-`KinesisSink.Emit` currently makes one `PutRecord` call per log line. That was
-the deliberate first step — it proves credentials, region, partition key, and
-the whole path to S3 without any buffering logic to debug at the same time — but
-it is not what ships.
+`KinesisSink` buffers envelopes and ships them with `PutRecords`. `Emit` only
+appends; nothing reaches the network until a flush, which fires on whichever
+comes first:
 
-At 10–100 lines/sec, one synchronous HTTPS round trip per line means the tailer
-blocks on the network for every line it reads, and each call carries its own
-request overhead against the shard's 1,000 records/sec limit. `PutRecords` takes
-up to 500 records (5MB) per call.
+| Trigger | Value | Why |
+|---------|-------|-----|
+| Record count | 500 | The API's hard per-call cap |
+| Payload bytes | 4MB | Under the 5MB cap; partition keys count toward it |
+| Poll tick | 500ms | Bounds staleness when the log goes quiet between missions |
 
-What has to be decided:
+The time trigger is not an optimization. With a buffering sink, `Flush` is the
+only thing that moves records off the machine, so `Run` calls it every tick —
+without that, envelopes would sit in memory until Ctrl-C and a crash would lose
+the session. (`StdoutSink` hid this: `bufio.Writer` self-flushes when full.)
 
-- **Flush trigger.** Record count, payload bytes, or a time bound — in practice
-  all three, whichever comes first. A time bound is what keeps the last few
-  lines of an idle session from sitting in the buffer indefinitely.
-- **Partial failure.** `PutRecords` returns `FailedRecordCount` with a
-  per-record status; the call can succeed overall while individual records fail
-  (usually `ProvisionedThroughputExceededException`). Only the failed subset may
-  be retried — resending the whole batch duplicates records that already
-  landed. Duplicates are survivable, since `(session_id, seq)` makes them
-  idempotent, but manufacturing them is still wrong.
-- **Backpressure.** What happens when the buffer fills faster than it drains.
-  Blocking the tailer risks falling behind the log; dropping loses data.
-- **Durability.** Today an `Emit` error propagates up and stops the tailer, so a
-  transient network blip ends the session capture. The design calls for
-  exponential backoff plus a local disk spool drained on recovery — never lose
-  lines, never block on the network.
+**Partial failures.** `PutRecords` can return HTTP 200 while individual records
+failed — usually `ProvisionedThroughputExceededException` on one record and not
+its neighbour. `err == nil` is therefore not success; `FailedRecordCount` has to
+be checked separately, and the AWS SDK's built-in retry does not help because
+the *call* succeeded. Response entries are positionally matched to the request
+and carry only an error code, so the retry batch is rebuilt by index from the
+input still in hand, and only the failed subset is resent — resending everything
+would duplicate records that already landed. Retries use exponential backoff
+with jitter, bounded at 5 attempts.
 
-`Flush` becomes load-bearing at that point: with a buffer, records exist that
-the tailer considers emitted but that have not left the machine, and only the
-shutdown flush saves them. The context plumbing for that is already in place —
-`main` cancels on signal and hands the final drain and flush a separate 10s
-budget derived from `context.Background()`, so cleanup still has a live context
-after everything else has been cancelled.
+Duplicates are survivable regardless: `(session_id, seq)` is the idempotency
+key, and delivery is at-least-once by design.
 
-`IdlePoll` is the benchmark to watch: batching must not turn an idle poll into
-network work.
+**Ordering is not preserved.** Neither `PutRecords` nor Firehose guarantees it,
+and retries reorder further — a verified session's S3 object holds every `seq`
+exactly once but not in ascending order. Consumers sort by `(session_id, seq)`;
+file position means nothing.
+
+**Backpressure.** A failed flush keeps the batch buffered and reports the error
+without killing the tailer — a brief Kinesis outage is backpressure, not a
+reason to stop capturing. Because "never give up" would mean an unbounded
+buffer, `Emit` returns a fatal error past 50,000 buffered records and the
+operator exits loudly. Losing records unnoticed is worse than stopping.
+
+**Newline delimiting.** Each record carries a trailing `\n`. Firehose
+concatenates payloads verbatim, so without it the S3 object arrives as one
+unbroken line that no NDJSON reader can parse.
+
+## Deviation from the spec: no disk spool
+
+The [phase 1 design](../docs/superpowers/specs/2026-07-21-relic-phase1-design.md)
+calls for "exponential backoff + spool batches to local disk; drain spool on
+recovery." The backoff exists; the spool was deliberately cut.
+
+Reaching the case it protects against takes a network outage that outlasts the
+retry budget *and* runs long enough to buffer 50,000 records — on the order of
+fifteen minutes mid-session — with the operator then exiting on the ceiling. The
+spec's assumption was that the memory buffer held the only copy of those lines.
+It does not: `EE.log` is a durable local file the game keeps writing regardless,
+so recovery from any such failure is one command, `./tail -once -sink=kinesis`,
+which re-reads the session from the top. At-least-once makes the resulting
+duplicates harmless.
+
+So the spool buys automatic recovery, from a rare event, that already has a
+manual fix — at the cost of a file format, crash-safe appends, drain ordering
+against live tailing, and a disk ceiling.
+
+The other reason is scope. Durable local buffering is an **agent** problem, not
+a data-engineering one: it is the same work that goes into Fluent Bit or Vector,
+and it is usually owned by SRE or observability engineers rather than by the
+people who own what happens once records are in the stream. This project exists
+to learn streaming data infrastructure, so the effort belongs downstream —
+consumer checkpointing, partial failure inside a consumer batch, hot/cold path
+divergence, replay. Those are the concepts the producer was built to reach.
+
+Worth revisiting if a real session is ever lost this way. So far none has been.
+
+`IdlePoll` is the benchmark to watch: an idle poll must not become network work.
 
 ## Tests
 

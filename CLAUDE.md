@@ -2,7 +2,7 @@
 
 Personal data-infra project: stream Warframe `EE.log` (+ EEG later) → Kinesis → S3/DynamoDB → live dashboard. Read [README.md](README.md) for the story and roadmap; the authoritative phase-1 design is [docs/superpowers/specs/2026-07-21-relic-phase1-design.md](docs/superpowers/specs/2026-07-21-relic-phase1-design.md).
 
-**Status:** Phase 1, M2 in progress. M1 (Go operator) is built — tails `EE.log`, redacts IPs, emits versioned envelopes to stdout. Both Terraform stacks apply cleanly and the Kinesis → Firehose → S3 path is wired, but **nothing has been verified end-to-end**: no record has flowed through the stream yet. The operator does not write to Kinesis (still stdout only). Next: manual `put-record` smoke test, then the operator's Kinesis producer.
+**Status:** Phase 1, M2 essentially complete. The full path is **verified end-to-end**: the operator tails `EE.log`, redacts IPs, batches envelopes with `PutRecords`, and an 11,629-line session landed in S3 as valid newline-delimited JSON — every `seq` present exactly once, no loss, no duplicates. Records arrive out of `seq` order in the object (expected; `PutRecords` and Firehose do not preserve order), so consumers must sort by `(session_id, seq)` and never by file position. Still unproven: redaction against a real address — the captured session contains none, since peer IPs only appear once matchmaking connects. Next: M3's hot-path Lambda, and a session with real squadmates to confirm `<ip>` redaction in production.
 
 ## PII — treat game logs as sensitive
 
@@ -31,13 +31,18 @@ Rules, no exceptions:
   - Cold path stores raw, untransformed lines — it is the replayable source of truth.
   - `(session_id, seq)` is the ordering/idempotency key; delivery is at-least-once everywhere.
   - Envelope changes must bump `v` and stay backward-compatible (old raw data must remain replayable).
+- **Deliberate deviation from the spec: no operator disk spool.** The design calls for spooling batches to disk on Kinesis failure; only the backoff was built. `EE.log` is itself durable, so recovery is `./tail -once -sink=kinesis` and at-least-once makes the duplicates harmless. The deeper reason is scope — local durable buffering is an agent/SRE concern, and this project's learning goal is the data-engineering work downstream of the stream. Don't "fix" this by building the spool; see [operator/README.md](operator/README.md#deviation-from-the-spec-no-disk-spool).
 
 ## Terraform & AWS hygiene
 
 - Two stacks: `infra/data` (persistent; holds the data bucket, TF state bucket, SSM param) and `infra/pipeline` (ephemeral — destroyed whenever idle; the owner does this habitually).
 - Deleting the data bucket or its contents is an **owner-only decision**. Agents must never destroy `infra/data`, empty the data bucket, or weaken its protections on their own — only on David's explicit instruction. (No hard `prevent_destroy` required; the guardrail is "only David deletes data," not "data is undeletable.")
 - Destroy of the pipeline must wait for Firehose to flush (~2 min after last activity) before `terraform destroy`, or the last buffered records are lost.
-- The stacks share exactly one string: the SSM parameter `/relic/data/bucket_name`. The pipeline reads the bucket as a **data source**, never a managed resource — an `import` block or `resource "aws_s3_bucket"` in `infra/pipeline` would put the persistent bucket in the destroyable stack. `infra/data` must be applied first or the pipeline's data source lookup fails.
+- The stacks communicate only through SSM parameters, each owned by the stack whose lifecycle matches the value:
+  - `/relic/data/bucket_name` — written by `infra/data`, **read** by the pipeline as a data source.
+  - `/relic/pipeline/kinesis_stream_name` — written by `infra/pipeline`, read by the operator at startup. It lives in the ephemeral stack because the stream does; with the pipeline destroyed, `-sink=kinesis` fails fast at startup, which is the intended behavior.
+- The pipeline reads the bucket as a **data source**, never a managed resource — an `import` block or `resource "aws_s3_bucket"` in `infra/pipeline` would put the persistent bucket in the destroyable stack. `infra/data` must be applied first or the pipeline's data source lookup fails.
+- **Destroy order matters and nothing enforces it.** Destroying `infra/data` first strands the pipeline: its data sources can no longer resolve, so even `terraform destroy` fails to plan. Recovery is to recreate the bucket and SSM param (any bucket with the right name resolves — a data source is a lookup, not a reference), then destroy the pipeline normally.
 - All AWS resources go through Terraform — no console/CLI-created resources.
 - Cost discipline: no always-on compute, no VPC/NAT, nothing that bills while idle. If a change adds standing cost, flag it to the owner before applying.
 - **The Kinesis shard is the one thing that bills while idle** — provisioned mode, 1 shard, $0.015/shard-hour (~$11/month) from apply until destroy, regardless of traffic. This is why the pipeline gets torn down between sessions.
