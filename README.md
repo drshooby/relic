@@ -133,6 +133,37 @@ So S3 was empty while Kinesis looked healthy, and no data was ever lost — the 
 
 General rule: **in a streaming pipeline, ask which component owns durability.** Every stage downstream of it is reprocessable as long as you're inside the retention window; every stage upstream of an empty destination is worth checking before assuming data is gone. That's the same property Phase 2's replay tool depends on, and the reason the cold path stores raw lines. A day later, both the Kinesis retention and the Firehose retry window would have expired and the records really would have been gone.
 
+### A 200 from `PutRecords` does not mean the records landed
+
+Batching the operator's writes meant moving from `PutRecord` to `PutRecords`, which I read as "same call, takes a slice." It isn't. `PutRecords` returns **HTTP 200 with individual records failed inside the response body**:
+
+```
+{ FailedRecordCount: 47, Records: [ {SequenceNumber: "..."}, {ErrorCode: "ProvisionedThroughputExceededException"}, ... ] }
+```
+
+A shard can throttle one record while accepting its neighbour, so partial success is the *normal* case under load, not an edge case. Three things follow, and I'd have got all three wrong:
+
+- **`err == nil` is not success.** You have to check `FailedRecordCount` separately. Code that only checks the error silently drops records — the worst possible failure for a pipeline whose whole premise is a replayable archive.
+- **The SDK's built-in retry doesn't help.** It retries failed *calls*. This call succeeded. The gap is invisible unless you know to look for it.
+- **The response says which records failed, not what they were.** `Records[i]` in the response is positionally matched to `Records[i]` in the request, and carries only an error code — no data. The retry batch has to be rebuilt by index against the input you still hold.
+
+So the retry loop resends only the entries whose `ErrorCode` is set, with exponential backoff and jitter, and gives up after a bounded number of attempts rather than looping forever. Duplicates from a retry whose ack was lost are fine — `(session_id, seq)` is the idempotency key, and that is exactly what it's for.
+
+General rule: **for any batch API, find out what a partial failure looks like before trusting the status code.** The single-record version of the call taught me nothing about the batch version.
+
+### Adding a buffer moves the flush responsibility to the caller
+
+The operator originally wrote one record per line, straight to the network. Batching it — accumulate in `Emit`, send in `Flush` — is an obvious win: `PutRecords` bills per 25KB payload unit, so single-record puts of a few hundred bytes waste ~98% of a paid unit, and the per-shard limit is 1000 records/sec but only 200 API calls/sec.
+
+What I missed is that batching changes the contract. `Flush` had exactly one caller: `Shutdown`. That was fine while the only sink was stdout, because `bufio.Writer` self-flushes when its buffer fills — the sink quietly guaranteed progress on its own. A batching network sink makes no such promise. Nothing would have reached Kinesis until Ctrl-C, and a crash would have lost the entire session.
+
+The fix is small — flush on each poll tick — but it isn't an optimization for the idle case, which is how I first framed it. Without it the design is simply incorrect. Two consequences worth writing down:
+
+- **Three flush triggers, not one.** Record count and payload bytes have to fire inside `Emit` (the API caps a call at 500 records / 5MB), while the timer handles the log going quiet between missions. The tick alone can't bound batch size; the size caps alone can't bound staleness.
+- **A failed flush must not kill the tailer.** Kinesis being briefly unavailable is backpressure, not an outage — the records stay buffered and go out on the next tick. But "never give up" means an unbounded buffer, so there's a ceiling past which the operator exits loudly. Losing records unnoticed is worse than stopping.
+
+General rule: **when a component starts buffering, ask who is now responsible for making it drain** — and what happens when draining fails.
+
 ## Notes & constraints
 
 - EE.log facts (verified against a real session, which corrected several claims the community wiki makes): truncated on every game launch; writes can lag ~10s (engine buffering); header contains the absolute launch time, which anchors every relative timestamp to UTC — the key to cross-source fusion later.
