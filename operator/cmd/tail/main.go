@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -54,17 +55,23 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to load config %s\n", err)
-		os.Exit(1)
-	}
+	// Logs go to stderr so stdout stays a clean envelope stream that can be
+	// piped or redirected.
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// The tailer logs through the package default rather than carrying a logger
+	// of its own; the sink takes one explicitly so tests can capture it.
+	slog.SetDefault(log)
 
 	var sink Sink
 	if *sinkFlag == "kinesis" {
-		ks, err := NewKinesisSink(ctx, cfg)
+		cfg, err := config.LoadDefaultConfig(ctx)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			log.Error("load aws config", "err", err)
+			os.Exit(1)
+		}
+		ks, err := NewKinesisSink(ctx, cfg, log)
+		if err != nil {
+			log.Error("build kinesis sink", "err", err)
 			os.Exit(1)
 		}
 		sink = ks
@@ -74,7 +81,7 @@ func main() {
 
 	tailer, err := NewTailer(path, sink)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		log.Error("open log", "err", err)
 		os.Exit(1)
 	}
 	defer tailer.Close()
@@ -83,7 +90,7 @@ func main() {
 	if *once {
 		runErr = tailer.Poll(ctx)
 	} else {
-		fmt.Fprintf(os.Stderr, "tailing %s\n", path)
+		log.Info("tailing", "path", path, "sink", *sinkFlag)
 		runErr = tailer.Run(ctx)
 	}
 
@@ -94,7 +101,8 @@ func main() {
 	}
 
 	if runErr != nil {
-		fmt.Fprintln(os.Stderr, runErr)
+		log.Error("exiting", "err", runErr)
 		os.Exit(1)
 	}
+	log.Info("stopped")
 }

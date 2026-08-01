@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -375,5 +376,69 @@ func TestEmittedRecordsAreNewlineDelimited(t *testing.T) {
 		if err := json.Unmarshal(line, &e); err != nil {
 			t.Errorf("line %d does not parse as an envelope: %v", i, err)
 		}
+	}
+}
+
+// A successful flush must report what moved, so a live session shows progress
+// instead of silence.
+func TestFlushLogsRecordsSent(t *testing.T) {
+	f := &fakeKinesis{results: []fakeResult{{}}}
+	sink := newTestSink(f)
+
+	var logged bytes.Buffer
+	sink.log = slog.New(slog.NewTextHandler(&logged, nil))
+
+	for i := range 3 {
+		if err := sink.Emit(context.Background(), envelopeN(i)); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+	}
+	if err := sink.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	got := logged.String()
+	if !strings.Contains(got, "records=3") {
+		t.Errorf("flush log does not report the record count: %q", got)
+	}
+}
+
+// Retries are the interesting failure mode, so a partial failure must say so
+// rather than being absorbed into a silent success.
+func TestPartialFailureIsLogged(t *testing.T) {
+	f := &fakeKinesis{results: []fakeResult{
+		{failIdx: []int{1}},
+		{},
+	}}
+	sink := newTestSink(f)
+
+	var logged bytes.Buffer
+	sink.log = slog.New(slog.NewTextHandler(&logged, nil))
+
+	for i := range 3 {
+		if err := sink.Emit(context.Background(), envelopeN(i)); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+	}
+	if err := sink.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	if got := logged.String(); !strings.Contains(got, "failed=1") {
+		t.Errorf("partial failure not logged: %q", got)
+	}
+}
+
+// A sink built without an explicit logger must still work rather than panic on
+// a nil *slog.Logger.
+func TestSinkWithoutLoggerDoesNotPanic(t *testing.T) {
+	f := &fakeKinesis{results: []fakeResult{{}}}
+	sink := &KinesisSink{client: f, streamName: "test-stream", baseBackoff: time.Microsecond}
+
+	if err := sink.Emit(context.Background(), envelopeN(0)); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	if err := sink.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush: %v", err)
 	}
 }

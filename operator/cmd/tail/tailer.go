@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"regexp"
 	"strconv"
@@ -158,7 +159,7 @@ func (t *Tailer) Run(ctx context.Context) error {
 			// stop the tailer. The sink itself decides when being behind is
 			// fatal, and reports that through Emit.
 			if err := t.sink.Flush(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				fmt.Fprintf(os.Stderr, "flush: %v\n", err)
+				slog.Warn("tick flush failed", "err", err)
 			}
 		}
 	}

@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
-	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -95,6 +95,16 @@ type KinesisSink struct {
 	buf         []types.PutRecordsRequestEntry
 	bufBytes    int
 	baseBackoff time.Duration
+	log         *slog.Logger
+}
+
+// logger returns the sink's logger, or a discarding one when none was set. A
+// zero-value sink is useful in tests, and it must not panic there.
+func (sink *KinesisSink) logger() *slog.Logger {
+	if sink.log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return sink.log
 }
 
 func getSSMStreamName(ctx context.Context, cfg aws.Config) (string, error) {
@@ -107,7 +117,7 @@ func getSSMStreamName(ctx context.Context, cfg aws.Config) (string, error) {
 	return aws.ToString(out.Parameter.Value), nil
 }
 
-func NewKinesisSink(ctx context.Context, cfg aws.Config) (*KinesisSink, error) {
+func NewKinesisSink(ctx context.Context, cfg aws.Config, log *slog.Logger) (*KinesisSink, error) {
 	streamName, err := getSSMStreamName(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -116,10 +126,12 @@ func NewKinesisSink(ctx context.Context, cfg aws.Config) (*KinesisSink, error) {
 		return nil, fmt.Errorf("%s is empty; is infra/pipeline applied?", streamNameParam)
 	}
 
+	log.Info("kinesis sink ready", "stream", streamName)
 	return &KinesisSink{
 		client:      kinesis.NewFromConfig(cfg),
 		streamName:  streamName,
 		baseBackoff: defaultBaseBackoff,
+		log:         log,
 	}, nil
 }
 
@@ -146,7 +158,8 @@ func (sink *KinesisSink) Emit(ctx context.Context, e Envelope) error {
 		// being briefly unavailable is normal backpressure and must not kill the
 		// tailer, so the error is reported and swallowed here.
 		if err := sink.Flush(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "kinesis flush failed, %d records buffered: %v\n", len(sink.buf), err)
+			sink.logger().Warn("flush failed, records buffered",
+				"buffered", len(sink.buf), "err", err)
 		}
 	}
 
@@ -160,9 +173,11 @@ func (sink *KinesisSink) Flush(ctx context.Context) error {
 	if len(sink.buf) == 0 {
 		return nil
 	}
+	records, bytes := len(sink.buf), sink.bufBytes
 	if err := sink.fire(ctx); err != nil {
 		return err
 	}
+	sink.logger().Info("flushed", "records", records, "bytes", bytes)
 	sink.buf, sink.bufBytes = sink.buf[:0], 0
 	return nil
 }
@@ -202,6 +217,11 @@ func (sink *KinesisSink) fire(ctx context.Context) error {
 			}
 		}
 		pending = next
+
+		// A 200 with records inside it failed is the case worth surfacing: it
+		// looks like success to anything checking only the error.
+		sink.logger().Warn("partial batch failure, retrying",
+			"failed", len(pending), "attempt", attempt+1)
 	}
 
 	return fmt.Errorf("%d records still failing after %d attempts", len(pending), maxAttempts)
