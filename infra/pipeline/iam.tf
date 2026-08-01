@@ -96,3 +96,28 @@ resource "aws_iam_role_policy_attachment" "firehose_logging_attach" {
   role       = aws_iam_role.firehose_role.name
   policy_arn = aws_iam_policy.firehose_logging.arn
 }
+
+resource "aws_iam_role" "firehose_lambda_role" {
+  name = "relic-lambda-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+        Condition = {
+          StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "firehose_lambda_basic" {
+  role       = aws_iam_role.firehose_lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}

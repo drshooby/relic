@@ -30,6 +30,19 @@ resource "aws_kinesis_firehose_delivery_stream" "extended_s3_stream" {
     prefix              = "raw/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/"
     error_output_prefix = "errors/!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"
 
+    processing_configuration {
+      enabled = "true"
+
+      processors {
+        type = "Lambda"
+
+        parameters {
+          parameter_name  = "LambdaArn"
+          parameter_value = aws_lambda_function.lambda_processor.arn
+        }
+      }
+    }
+
     # Without this, delivery failures (e.g. AccessDenied) are silent:
     # Firehose retries for up to 24h and surfaces nothing.
     cloudwatch_logging_options {
