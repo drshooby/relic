@@ -2,7 +2,7 @@
 
 Personal data-infra project: stream Warframe `EE.log` (+ EEG later) → Kinesis → S3/DynamoDB → live dashboard. Read [README.md](README.md) for the story and roadmap; the authoritative phase-1 design is [docs/superpowers/specs/2026-07-21-relic-phase1-design.md](docs/superpowers/specs/2026-07-21-relic-phase1-design.md).
 
-**Status:** Phase 1, M2 essentially complete. The full path is **verified end-to-end**: the operator tails `EE.log`, redacts IPs, batches envelopes with `PutRecords`, and an 11,629-line session landed in S3 as valid newline-delimited JSON — every `seq` present exactly once, no loss, no duplicates. Records arrive out of `seq` order in the object (expected; `PutRecords` and Firehose do not preserve order), so consumers must sort by `(session_id, seq)` and never by file position. Still unproven: redaction against a real address — the captured session contains none, since peer IPs only appear once matchmaking connects. Next: M3's hot-path Lambda, and a session with real squadmates to confirm `<ip>` redaction in production.
+**Status:** Phase 1, M2 complete. The full path is **verified end-to-end** across two live sessions: the operator tails `EE.log`, redacts IPs, batches envelopes with `PutRecords`, and both sessions landed in S3 as valid newline-delimited JSON with every `seq` present exactly once — no loss, no duplicates. **Redaction is confirmed against real peer addresses**: a matchmade session (828 `Net` lines) produced 481 redactions across 384 lines, with zero addresses surviving. Records arrive out of `seq` order in the object (expected; `PutRecords` and Firehose do not preserve order), so consumers must sort by `(session_id, seq)` and never by file position. Next: M3's hot-path Lambda.
 
 ## PII — treat game logs as sensitive
 
@@ -13,6 +13,8 @@ Personal data-infra project: stream Warframe `EE.log` (+ EEG later) → Kinesis 
 - Squad display names, player ids, and clan ids are treated as gameplay data, not identity, and are kept.
 
 The operator redacts IP addresses at the source (`operator/cmd/tail/redact.go`) so nothing downstream ever stores one. That is a deliberate, documented exception to "cold path stores raw lines" — the invariant exists to keep history replayable, and no parser needs an IP to reconstruct a mission.
+
+**Verifying redaction: `<ip>` does not appear literally in the archive.** Go's `encoding/json` escapes `<` and `>` unconditionally, so the placeholder is stored as `<ip>`. Grepping raw NDJSON for `<ip>` returns zero matches on a correctly-redacted file, which reads exactly like a redaction failure. Always unmarshal before checking, or grep for the escaped form — a bad grep here previously produced a confident, wrong "redaction never fired" conclusion.
 
 Rules, no exceptions:
 

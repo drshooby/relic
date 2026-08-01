@@ -135,6 +135,21 @@ syntactically valid address, so it is recognised by context (the word "version")
 rather than by pattern. Anything without that context is redacted, so an
 unrecognised version line gets mangled rather than an address getting through.
 
+Verified in production: a matchmade session with 828 `Net` lines produced 481
+redactions across 384 lines, with no address surviving. Redacted lines keep
+their port — `public address <ip>:4950`.
+
+**The placeholder is escaped in the archive.** Go's `encoding/json` escapes `<`
+and `>` unconditionally, so `<ip>` is stored as `<ip>`. Grepping raw
+NDJSON for `<ip>` finds nothing on a perfectly redacted file, which looks
+identical to redaction having failed. Unmarshal before checking, or search for
+the escaped form:
+
+```sh
+jq -r '.raw' session.ndjson | grep -c '<ip>'   # correct
+grep -c '<ip>' session.ndjson                  # always 0, means nothing
+```
+
 ## Performance
 
 The workload is small — Warframe writes on the order of 10–100 lines/sec — so

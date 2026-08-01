@@ -59,7 +59,7 @@ The Kinesis shard is the only thing that bills while idle — $0.015/shard-hour,
 The serverless streaming backbone described above.
 
 - **M1** ✅ — Go operator tails the real EE.log through a live play session (truncation-safe, offline, envelopes to stdout, IPs redacted at the source)
-- **M2** ✅ — operator → Kinesis → Firehose → S3, verified end-to-end against a real session. 11,629 log lines landed as 11,629 newline-delimited envelopes: every `seq` present exactly once, no loss, no duplicates, every line independently parseable. The operator batches with `PutRecords` (500 records / 4MB / one poll tick, whichever comes first), retries only the individually-failed records with exponential backoff, and reads its stream name from SSM. Records arrive out of `seq` order in the object — `PutRecords` and Firehose preserve neither, which is exactly why `(session_id, seq)` is the ordering key rather than file position.
+- **M2** ✅ — operator → Kinesis → Firehose → S3, verified end-to-end against two live sessions (11,629 and 7,876 lines). Every `seq` present exactly once in both: no loss, no duplicates, every line independently parseable. IP redaction is confirmed against real peer addresses — a matchmade session produced 481 redactions across 384 lines with none surviving. The operator batches with `PutRecords` (500 records / 4MB / one poll tick, whichever comes first), retries only the individually-failed records with exponential backoff, and reads its stream name from SSM. Records arrive out of `seq` order in the object — `PutRecords` and Firehose preserve neither, which is exactly why `(session_id, seq)` is the ordering key rather than file position.
 - **M3** — Hot-path Lambda parses into DynamoDB; events queryable seconds after they happen in-game
 - **M4** — Custom dashboard shows the live session feed
 
@@ -163,6 +163,32 @@ The fix is small — flush on each poll tick — but it isn't an optimization fo
 - **A failed flush must not kill the tailer.** Kinesis being briefly unavailable is backpressure, not an outage — the records stay buffered and go out on the next tick. But "never give up" means an unbounded buffer, so there's a ceiling past which the operator exits loudly. Losing records unnoticed is worse than stopping.
 
 General rule: **when a component starts buffering, ask who is now responsible for making it drain** — and what happens when draining fails.
+
+### Verify the verification — a bad grep invented a bug
+
+The operator replaces IP addresses with `<ip>` before anything leaves the machine. Checking that in the S3 archive looked trivial:
+
+```sh
+grep -c '<ip>' session.ndjson    # 0
+```
+
+Zero. On a session with 828 `Net` lines, NAT traffic, and squad messages. I had a tidy explanation ready — peer addresses only appear once matchmaking connects, so a session that never squadded up would have nothing to redact — and it was completely wrong.
+
+Go's `encoding/json` escapes `<` and `>` unconditionally, as an XSS precaution for JSON embedded in HTML. The placeholder is stored as `<ip>`. Searching for the literal string returns zero on a *perfectly redacted* file, which is indistinguishable from redaction never having run. The real count was 481 redactions across 384 lines.
+
+Two things went wrong, and the second is the worse one:
+
+- **The measurement was broken in the direction that looks like a real finding.** A false "0 matches" reads as a bug in the thing being tested, not a bug in the test. Had it come back with an inflated number I'd have questioned the grep immediately.
+- **I explained the bad number instead of checking it.** A plausible story arrived before verification did, and it was persuasive enough to stop the investigation. The tell was available the whole time: 828 `Net` lines and 58 "public address" entries are not what "no network activity" looks like.
+
+The fix is to check the pipeline end to end on data where the answer is already known — mask the digits and *look* at a line rather than counting matches:
+
+```sh
+grep -o '"raw":"[^"]*public address[^"]*"' session.ndjson | head -1 | sed -E 's/[0-9]/N/g'
+# "raw":"NN.NNN Net [Info]: ... public address \uNNNcip\uNNNe:NNNN"
+```
+
+General rule: **when a check reports that something is broken, confirm the check works before believing it.** A verification step is code too, and a plausible explanation for a bad measurement is not evidence — it is the thing that stops you from taking the measurement again.
 
 ## Notes & constraints
 
