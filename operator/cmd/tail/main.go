@@ -51,7 +51,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config %s\n", err)
 		os.Exit(1)
@@ -59,7 +62,12 @@ func main() {
 
 	var sink Sink
 	if *sinkFlag == "kinesis" {
-		sink = NewKinesisSink(cfg, "relic-events-stream")
+		ks, err := NewKinesisSink(ctx, cfg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		sink = ks
 	} else {
 		sink = NewStdoutSink(os.Stdout)
 	}
@@ -70,9 +78,6 @@ func main() {
 		os.Exit(1)
 	}
 	defer tailer.Close()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	var runErr error
 	if *once {
