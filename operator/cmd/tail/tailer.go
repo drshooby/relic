@@ -153,8 +153,12 @@ func (t *Tailer) Run(ctx context.Context) error {
 				}
 				return err
 			}
-			if err := t.sink.Flush(ctx); err != nil {
-				return err
+			// A sink that batches keeps its records on a failed flush and
+			// retries them on the next tick, so a transient outage must not
+			// stop the tailer. The sink itself decides when being behind is
+			// fatal, and reports that through Emit.
+			if err := t.sink.Flush(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				fmt.Fprintf(os.Stderr, "flush: %v\n", err)
 			}
 		}
 	}
