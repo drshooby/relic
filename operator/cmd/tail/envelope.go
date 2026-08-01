@@ -62,16 +62,31 @@ func (sink *StdoutSink) Flush(ctx context.Context) error {
 	return sink.w.Flush()
 }
 
+// kinesisAPI is the slice of the Kinesis client this sink uses. Depending on an
+// interface rather than *kinesis.Client lets tests drive the retry paths --
+// partial failures especially -- without reaching AWS.
+type kinesisAPI interface {
+	PutRecords(context.Context, *kinesis.PutRecordsInput, ...func(*kinesis.Options)) (*kinesis.PutRecordsOutput, error)
+}
+
+// defaultBaseBackoff is the first retry's wait; each attempt doubles it.
+const defaultBaseBackoff = 100 * time.Millisecond
+
 type KinesisSink struct {
-	client     *kinesis.Client
-	streamName string
-	buf        []types.PutRecordsRequestEntry
-	bufBytes   int
+	client      kinesisAPI
+	streamName  string
+	buf         []types.PutRecordsRequestEntry
+	bufBytes    int
+	baseBackoff time.Duration
 }
 
 func NewKinesisSink(cfg aws.Config, streamName string) *KinesisSink {
 	client := kinesis.NewFromConfig(cfg)
-	return &KinesisSink{client: client, streamName: streamName}
+	return &KinesisSink{
+		client:      client,
+		streamName:  streamName,
+		baseBackoff: defaultBaseBackoff,
+	}
 }
 
 // PutRecords caps a single call at 500 records and 5MB. The byte ceiling is set
@@ -133,7 +148,7 @@ func (sink *KinesisSink) fire(ctx context.Context) error {
 	pending := sink.buf
 	for attempt := range maxAttempts {
 		if attempt > 0 {
-			backoff := time.Duration(1<<attempt) * 100 * time.Millisecond
+			backoff := sink.baseBackoff * time.Duration(1<<attempt)
 			jitter := time.Duration(rand.Int63n(int64(backoff)))
 			select {
 			case <-time.After(backoff + jitter):
