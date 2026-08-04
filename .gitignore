@@ -46,3 +46,5 @@ terraform.rc
 EE.log
 *.EE.log
 **/EE.log
+
+*.zip
