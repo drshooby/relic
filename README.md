@@ -73,7 +73,11 @@ Second producer: EEG headset (hardware TBD). High-frequency continuous signal al
 
 The relic reward reveal is the anchor event, and it turns out to be **two** events ~113–285ms apart: your own roll landing (absolute evaluation — "is my drop good?") and squadmates' rolls loading (relative re-evaluation — "is mine good *compared to theirs*?"). Same item, potentially opposite valence, independently randomized. That is a natural 2×2 the game generates for free.
 
-Stage one is fully available today. Stage two is **blocked on labelling, not timing**: `EE.log` records when squadmates' rewards arrive but not what they were, and unlabelled trials cannot be averaged. Recovering the labels needs a source outside the log — manual annotation, Warframe API inventory diffing, or OCR of the reveal screen. The hot path stores one event per line specifically so those labels can be joined onto timestamps already in the archive.
+Stage one is fully labelled today. Stage two has **timing but not labels**: `EE.log` records when squadmates' rewards arrive, not what they were.
+
+That gap matters less than it first appears. The dashboard needs only the timestamps — two response spikes of differing magnitude, against a reveal you just watched, tells the story without any rarity annotation. Labels are needed for *averaging across trials*, which is a later concern. And a partial source may already be in the log: relic projection paths load early in the mission and encode item and rarity (`.../T2VoidProjectionProteaPrimeABronze`), though whether they reliably map to the squad's relics is unverified against more than one session. Failing that: manual annotation, Warframe API inventory diffing, or OCR of the reveal screen.
+
+The hot path stores one event per line specifically so labels from any of those sources can be joined onto timestamps already in the archive.
 
 ### Phase 4 — Consumer upgrade (optional)
 

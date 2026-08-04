@@ -99,9 +99,14 @@ Stage two is a distinct cognitive event. The reward itself does not change; its 
 
 The design is unusually clean because the two stages are **independently randomized**, yielding a natural 2x2 (own roll good/bad x squad rolls better/worse) where the same item can carry opposite valence. The 113-285ms separation is wide enough to window the stages independently.
 
-**This is currently blocked by a data limit, not a design choice.** Squadmates' rolls arrive without item paths, so stage-two *onset* is known but stage-two *condition* is not — and trials that cannot be labelled cannot be averaged. Stage one is fully available today.
+**Labelling is only required for statistics, not for the dashboard.** A live overlay needs the timestamps alone: two response spikes of differing magnitude, against a reveal the viewer just watched, is legible without any rarity annotation. Averaging across trials is what needs labelled conditions, and that is a phase-3 concern.
 
-Recovering stage-two labels needs a source outside `EE.log`, in rough order of effort: manual annotation after each fissure (fine for a pilot); inventory diffing via the Warframe API (also recovers the unlogged selection, but not the rejected options); screen capture with OCR of the reveal screen (the only source holding all four items).
+Squadmates' rolls arrive without item paths, so stage-two *onset* is known and stage-two *condition* is not. Stage one is fully labelled today.
+
+A promising partial source for stage-two labels sits in the same log, unverified: relic **projection resource paths** load early in the mission (~64s, versus the 240s reveal) and encode both item and rarity —
+`/Lotus/Types/Game/Projections/T2VoidProjectionProteaPrimeABronze` (`T2` = relic tier, then the Prime item, then a slot letter, then the rarity tier). Three appeared in the verifying session. Whether they correspond to the squad's equipped relics, and whether they reliably precede every reveal, is **not established** — one session is not enough to conclude it, and the same reasoning error already cost a redesign once (see the README lesson). Worth checking against several fissure runs before relying on it.
+
+Failing that, labels need a source outside `EE.log`: manual annotation after each fissure (fine for a pilot); Warframe API inventory diffing (also recovers the unlogged selection, but not the rejected options); or OCR of the reveal screen (the only source holding all four items).
 
 None of this changes M3. It is the strongest argument for per-line events: the timestamps land in the archive now, and item labels from another source can be joined onto them later. Collapsing the sequence would make this permanently unrecoverable.
 
