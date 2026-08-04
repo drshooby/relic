@@ -92,3 +92,21 @@ def test_build_session_update_uses_atomic_add_and_if_not_exists():
     values = update["ExpressionAttributeValues"]
     assert values[":inc"] == 5
     assert values[":ttl"] == NOW + SESSIONS_TTL_SECONDS
+
+
+def test_build_session_update_omits_timestamp_when_last_seen_is_none():
+    # boto3's TypeSerializer does not raise on None -- it serializes it to
+    # DynamoDB's NULL type. A naive ":seen": None would succeed and write an
+    # explicit null last_seen_at/started_at. The fix is to leave the
+    # timestamp SET clauses out entirely so a later batch with a real clock
+    # can still set started_at via if_not_exists.
+    update = build_session_update("abc123", 5, None, NOW)
+    assert update["Key"] == {"session_id": "abc123"}
+    expr = update["UpdateExpression"]
+    assert "ADD" in expr and "event_count" in expr
+    assert "last_seen_at" not in expr
+    assert "started_at" not in expr
+    values = update["ExpressionAttributeValues"]
+    assert values[":inc"] == 5
+    assert values[":ttl"] == NOW + SESSIONS_TTL_SECONDS
+    assert ":seen" not in values

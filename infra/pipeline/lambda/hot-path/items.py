@@ -49,14 +49,33 @@ def build_event_item(envelope: dict, now: int) -> dict:
 
 
 def build_session_update(
-    session_id: str, count: int, last_seen: str, now: int
+    session_id: str, count: int, last_seen: str | None, now: int
 ) -> dict:
-    """UpdateItem kwargs for relic-sessions: one call per batch, not per record.
+    """UpdateItem kwargs for relic-sessions: one call per session per batch.
 
     ADD is atomic, so concurrent batches do not clobber each other. A retried
     batch double-counts, making event_count APPROXIMATE -- acceptable for a
     display counter, documented so nobody mistakes it for exact.
+
+    `last_seen` is None when none of this session's records in the batch
+    carry a wall_time_utc (every line the operator emits before it parses the
+    log header has no clock). boto3's TypeSerializer does not raise on
+    None -- it happily serializes it to DynamoDB's NULL type, so a naive
+    ":seen": None would succeed and leave last_seen_at/started_at explicitly
+    NULL. Omitting the timestamp SET clauses entirely when there is nothing
+    to record keeps a later batch free to set started_at correctly via
+    if_not_exists.
     """
+    if last_seen is None:
+        return {
+            "Key": {"session_id": session_id},
+            "UpdateExpression": "ADD event_count :inc SET expires_at = :ttl",
+            "ExpressionAttributeValues": {
+                ":inc": count,
+                ":ttl": now + SESSIONS_TTL_SECONDS,
+            },
+        }
+
     return {
         "Key": {"session_id": session_id},
         "UpdateExpression": (
