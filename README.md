@@ -190,9 +190,43 @@ grep -o '"raw":"[^"]*public address[^"]*"' session.ndjson | head -1 | sed -E 's/
 
 General rule: **when a check reports that something is broken, confirm the check works before believing it.** A verification step is code too, and a plausible explanation for a bad measurement is not evidence — it is the thing that stops you from taking the measurement again.
 
+### An empty grep measures the session, not the format
+
+Designing the hot path's parser meant confirming what a relic reward actually looks like in `EE.log`. The spec quotes the line, so this was a formality:
+
+```sh
+grep -c VoidProjections EE.log    # 0
+```
+
+Zero, in an 8,217-line log with three completed missions. I concluded the spec's example was stale — written from an older client, or transcribed from the wiki — and started redesigning the parser around `EndOfMatch.lua`, which was abundantly present.
+
+Wrong. Relic rewards only appear in **Void Fissure** missions. Those three completed missions were ordinary ones, so the log was correct and complete; there was simply nothing to log. Running a single fissure produced 15 `VoidProjections` lines matching the spec's format exactly, down to the `Sys [Info]` subsystem.
+
+This is the same failure as the redaction grep above, with the roles reversed: there the *measurement* was broken, here the measurement was fine and the **sample** didn't contain the phenomenon. Both produce a confident zero, and both invite a story that explains the zero instead of questioning it.
+
+What made it recoverable was cheap: play one fissure. Ten minutes of gameplay settled a question I had been answering by inference. When the data is *generated on demand*, generating more of it beats reasoning about why it's missing.
+
+Two durable notes for anyone touching the parser:
+
+- **Absence of a game-specific line is not evidence about its format** unless the session actually contained that activity. Check what the session *did* before concluding what the log *can't* do.
+- `EE.log` is truncated on every game launch, so the evidence is perishable. The 8,217-line session is gone; copy the file somewhere outside the repo before relaunching if it matters.
+
 ## Notes & constraints
 
 - EE.log facts (verified against a real session, which corrected several claims the community wiki makes): truncated on every game launch; writes can lag ~10s (engine buffering); header contains the absolute launch time, which anchors every relative timestamp to UTC — the key to cross-source fusion later.
+- **Relic rewards (`VoidProjections`) — verified against a live fissure run.** The reveal is a ~464ms burst on the `Sys` subsystem, not `Script`:
+
+  ```
+  240.444  VoidProjections: OpenVoidProjectionRewardScreenRMI       reveal screen opens
+  240.623  VoidProjections: <player_id> gets reward /Lotus/StoreItems/.../FulminPrimeBarrel
+  240.736  VoidProjections: Client got reward info from <player_id>  (squadmate, no item path)
+  240.908  VoidProjections: Client has reward info for all players now
+  ```
+
+  Two limits worth knowing before building anything on this. **Only your own item path is logged** — squadmates' rolls arrive as `Client got reward info from <id>` with no item, so the four-way reward table on screen is not recoverable from the log. And **the selection is never logged**: Warframe lets you take any squadmate's roll, so what you actually walk away with does not appear. A run that rolled a Fulmin Prime Barrel and ended with a Gauss Prime Chassis leaves only the Fulmin in the log. Acquisitions need a second source (inventory diffing, or manual annotation).
+
+  For EEG correlation this is still a clean anchor: screen-open is `t=0`, your own outcome lands ~180ms later, and the full reveal completes ~464ms in. Item paths use legacy internal names (`FulminPrimeBarrel`), so a path → display-name mapping is needed and cannot be produced by transliterating the path.
+
 - **PII is IP addresses, not email.** The wiki warns about an email in the header; this client logs none. It does log the owner's public address, the LAN address, and — because matchmaking is peer-to-peer — squadmates' addresses, and they appear mid-session in `Net` _and_ `Game` lines, not just the header. The operator strips them at the source, so nothing downstream ever stores one. Squad display names and player ids are kept: they are gameplay data, not identity.
 - Data lands only in a private bucket; committed test fixtures are sanitized.
 - Languages: Go (operator), Python (stream processing), TypeScript (dashboard) — right tool per layer.
