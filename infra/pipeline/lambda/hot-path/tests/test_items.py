@@ -22,6 +22,8 @@ def test_pad_seq_handles_uint64_max_without_overflowing_width():
     assert len(pad_seq(uint64_max)) == SEQ_WIDTH
 
 
+from decimal import Decimal
+
 from items import (
     build_event_item,
     build_session_update,
@@ -64,7 +66,15 @@ def test_build_event_item_ttl_is_int_seconds_not_millis():
 
 def test_build_event_item_preserves_float_precision():
     item = build_event_item(REWARD_ENVELOPE, NOW)
-    assert item["game_time_s"] == 240.623
+    # boto3's TypeSerializer rejects Python floats outright, so game_time_s
+    # must be a Decimal, not a float -- and it must be built via
+    # Decimal(str(x)), not Decimal(x): the latter would reproduce the
+    # binary float's stored artifact (240.62299999999999...) instead of
+    # the exact decimal value. Decimal("240.623") == 240.623 is False (a
+    # Decimal never compares equal to the imprecise float), so assert
+    # against the Decimal literal, not the float.
+    assert isinstance(item["game_time_s"], Decimal)
+    assert item["game_time_s"] == Decimal("240.623")
 
 
 def test_build_event_item_omits_null_clocks_rather_than_storing_none():
@@ -88,9 +98,14 @@ def test_build_session_update_uses_atomic_add_and_if_not_exists():
     assert update["Key"] == {"session_id": "abc123"}
     expr = update["UpdateExpression"]
     assert "ADD" in expr and "event_count" in expr
-    assert "if_not_exists(started_at" in expr
+    # Not just that if_not_exists(started_at appears, but that it binds the
+    # right placeholder. if_not_exists(started_at, :ttl) would pass a bare
+    # substring check while writing a UNIX-seconds integer into a timestamp
+    # field -- checking the full call pins the second argument too.
+    assert "if_not_exists(started_at, :seen)" in expr
     values = update["ExpressionAttributeValues"]
     assert values[":inc"] == 5
+    assert values[":seen"] == "2026-08-03T19:12:44Z"
     assert values[":ttl"] == NOW + SESSIONS_TTL_SECONDS
 
 

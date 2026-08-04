@@ -82,18 +82,33 @@ def lambda_handler(event, context):
     events_table = ddb.Table(os.environ["EVENTS_TABLE"])
     sessions_table = ddb.Table(os.environ["SESSIONS_TABLE"])
 
-    items = []
+    # Keyed by (session_id, seq), the project's documented idempotency key,
+    # not a plain list. Kinesis delivery is at-least-once (CLAUDE.md: "at
+    # least once everywhere"), and the Go operator's own retry path
+    # re-sends a whole buffered batch when it can't confirm a prior flush
+    # succeeded (operator/cmd/tail/envelope.go) -- so the SAME (session_id,
+    # seq) can legitimately appear twice in one Lambda invocation.
+    # BatchWriteItem rejects any request containing two operations on the
+    # same key ("ValidationException: Provided list of item keys contains
+    # duplicates"), which fails every item in the batch, not just the
+    # duplicate. Deduping here, last-write-wins, is correct and intended:
+    # (session_id, seq) identifies one source log line, so two envelopes
+    # sharing a key are the same event arriving twice, not two events.
+    items_by_key = {}
     skipped = 0
     for record in records:
         envelope = _decode(record)
         if envelope is None:
             skipped += 1
             continue
-        items.append(build_event_item(envelope, now))
+        item = build_event_item(envelope, now)
+        items_by_key[(item["session_id"], item["seq"])] = item
 
-    if not items:
+    if not items_by_key:
         logger.warning("batch of %d records yielded nothing writable", len(records))
         return
+
+    items = list(items_by_key.values())
 
     # batch_writer chunks at 25 and retries UnprocessedItems itself. Rolling
     # that by hand is the classic way to silently drop records: BatchWriteItem
@@ -106,7 +121,14 @@ def lambda_handler(event, context):
             batch.put_item(Item=item)
 
     # One session update per SESSION in the batch, not one per batch and not
-    # one per record. A Lambda event source mapping batches per shard, and
+    # one per record. len(session_items) here counts DISTINCT (session_id,
+    # seq) keys, not raw records, because by_session is built from the
+    # already-deduped `items` list above -- a retried record that collapsed
+    # for the events table also does not inflate event_count a second time.
+    # (event_count can still drift across separate retried batches -- that
+    # is the documented, accepted approximation -- this only removes the
+    # extra, undocumented source of drift from duplicates within one batch.)
+    # A Lambda event source mapping batches per shard, and
     # this stream runs a single shard, so a batch can hold records from more
     # than one session_id -- e.g. a new EE.log tail starting while the
     # previous session's records are still draining. Attributing the whole

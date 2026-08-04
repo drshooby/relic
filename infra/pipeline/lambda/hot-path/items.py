@@ -1,5 +1,7 @@
 """Envelope + parse result -> DynamoDB item dicts. Pure functions only."""
 
+from decimal import Decimal
+
 from parser import parse
 
 # uint64 max is 18446744073709551615 -- exactly 20 digits -- so a seq from the
@@ -44,6 +46,24 @@ def build_event_item(envelope: dict, now: int) -> dict:
     for field in ("game_time_s", "wall_time_utc"):
         if envelope.get(field) is not None:
             item[field] = envelope[field]
+
+    if "game_time_s" in item:
+        # boto3's resource-layer TypeSerializer rejects Python floats
+        # outright (TypeError: Float types are not supported. Use Decimal
+        # types instead.) -- DynamoDB's Number type has no binary-float
+        # representation. game_time_s is present on essentially every
+        # record (every line after the operator parses the log header), so
+        # an unconverted float here means every batch_writer flush raises,
+        # the event source mapping retries and DLQs, and the hot path
+        # writes zero events -- deterministically, so bisecting the batch
+        # never isolates a "bad" record.
+        #
+        # Decimal(str(x)), NOT Decimal(x): Decimal(240.623) reproduces the
+        # binary float's exact stored value (240.62299999999999...);
+        # Decimal(str(240.623)) gives exactly Decimal("240.623").
+        # game_time_s is the EEG-correlation alignment key, so its
+        # precision is load-bearing.
+        item["game_time_s"] = Decimal(str(item["game_time_s"]))
 
     return item
 

@@ -133,6 +133,77 @@ def test_write_failure_raises_so_the_batch_retries(monkeypatch):
         main.lambda_handler(event, None)
 
 
+def test_write_failure_at_flush_boundary_still_raises(monkeypatch):
+    # Real boto3 buffers put_item calls and only talks to DynamoDB at the
+    # 25-item chunk boundary or at batch_writer's __exit__ (`while
+    # self._items_buffer: self._flush()`). A test that only fails on the
+    # very first put_item proves an exception raised at the earliest
+    # possible moment propagates -- it says nothing about a failure
+    # surfacing later, during __exit__, which is where a stray
+    # try/except around the `with events_table.batch_writer()` block would
+    # silently swallow the error and break the DLQ contract. This drives
+    # the failure through that path instead.
+    fake = FakeDynamoResource(
+        fail_with=RuntimeError("ProvisionedThroughputExceeded"), fail_at_exit=True
+    )
+    monkeypatch.setattr(main, "_resource", lambda: fake)
+    event = {"Records": [_record(_envelope(1))]}
+
+    with pytest.raises(RuntimeError):
+        main.lambda_handler(event, None)
+
+
+def test_duplicate_seq_in_one_batch_collapses_to_last_write_and_does_not_raise(
+    fake_ddb, monkeypatch
+):
+    # Kinesis delivery is at-least-once, and the Go operator's own retry
+    # path re-sends a whole buffered batch when it can't confirm a prior
+    # flush succeeded (operator/cmd/tail/envelope.go:160-163) -- so the
+    # SAME (session_id, seq) can legitimately appear twice in one Lambda
+    # invocation. Real BatchWriteItem raises ValidationException on any
+    # request containing two operations on the same key, failing every
+    # item in the batch, not just the duplicate -- so this must not
+    # reach the fake's duplicate-key check at all; the handler is
+    # responsible for deduping before it ever calls put_item.
+    monkeypatch.setattr(main, "_resource", lambda: fake_ddb)
+    first = _record(_envelope(1, raw="1.0 Sys [Info]: first delivery"))
+    retry = _record(_envelope(1, raw="1.0 Sys [Info]: retried delivery"))
+    event = {"Records": [first, retry, _record(_envelope(2))]}
+
+    main.lambda_handler(event, None)  # must not raise
+
+    stored = fake_ddb.Table(EVENTS_TABLE).items
+    # Two distinct keys, not three records.
+    assert len(stored) == 2
+    key = ("abc123", "0" * 19 + "1")
+    # Last write wins -- (session_id, seq) is the idempotency key, so the
+    # two envelopes are the same event delivered twice, not two events.
+    assert stored[key]["raw"] == "1.0 Sys [Info]: retried delivery"
+
+
+def test_duplicate_seq_in_one_batch_does_not_inflate_event_count(
+    fake_ddb, monkeypatch
+):
+    # event_count is documented as approximate ACROSS retried batches (ADD
+    # double-counts a whole batch that gets retried) -- but a duplicate
+    # collapsing WITHIN a single batch must not add a second, undocumented
+    # source of drift on top of that.
+    monkeypatch.setattr(main, "_resource", lambda: fake_ddb)
+    event = {
+        "Records": [
+            _record(_envelope(1)),
+            _record(_envelope(1)),  # duplicate seq, same session
+            _record(_envelope(2)),
+        ]
+    }
+
+    main.lambda_handler(event, None)
+
+    (update,) = fake_ddb.Table(SESSIONS_TABLE).updates
+    # 2 distinct events, not 3 records.
+    assert update["ExpressionAttributeValues"][":inc"] == 2
+
+
 def test_empty_batch_does_not_touch_dynamodb(fake_ddb, monkeypatch):
     monkeypatch.setattr(main, "_resource", lambda: fake_ddb)
 
