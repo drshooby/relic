@@ -75,7 +75,9 @@ The relic reward reveal is the anchor event, and it turns out to be **two** even
 
 Stage one is fully labelled today. Stage two has **timing but not labels**: `EE.log` records when squadmates' rewards arrive, not what they were.
 
-That gap matters less than it first appears. The dashboard needs only the timestamps — two response spikes of differing magnitude, against a reveal you just watched, tells the story without any rarity annotation. Labels are needed for *averaging across trials*, which is a later concern. And a partial source may already be in the log: relic projection paths load early in the mission and encode item and rarity (`.../T2VoidProjectionProteaPrimeABronze`), though whether they reliably map to the squad's relics is unverified against more than one session. Failing that: manual annotation, Warframe API inventory diffing, or OCR of the reveal screen.
+That gap matters less than it first appears. The dashboard needs only the timestamps — two response spikes of differing magnitude, against a reveal you just watched, tells the story without any rarity annotation. Labels are needed for *averaging across trials*, which is a later concern.
+
+Nothing in the log states a reward's rarity. Relic **projection** paths (`.../T2VoidProjectionProteaPrimeABronze`) look like they do — four of them, one per player, each naming a Prime item and a tier — but they name the relics the squad *equipped*, not what those relics rolled. The run that ended with a Gauss Prime Chassis lists no Gauss projection at all. Labels need an outside source: manual annotation, Warframe API inventory diffing, or OCR of the reveal screen.
 
 The hot path stores one event per line specifically so labels from any of those sources can be joined onto timestamps already in the archive.
 

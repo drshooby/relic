@@ -103,10 +103,18 @@ The design is unusually clean because the two stages are **independently randomi
 
 Squadmates' rolls arrive without item paths, so stage-two *onset* is known and stage-two *condition* is not. Stage one is fully labelled today.
 
-A promising partial source for stage-two labels sits in the same log, unverified: relic **projection resource paths** load early in the mission (~64s, versus the 240s reveal) and encode both item and rarity —
-`/Lotus/Types/Game/Projections/T2VoidProjectionProteaPrimeABronze` (`T2` = relic tier, then the Prime item, then a slot letter, then the rarity tier). Three appeared in the verifying session. Whether they correspond to the squad's equipped relics, and whether they reliably precede every reveal, is **not established** — one session is not enough to conclude it, and the same reasoning error already cost a redesign once (see the README lesson). Worth checking against several fissure runs before relying on it.
+**A tempting false lead, checked and rejected.** Relic *projection* resource paths load early in the mission (~64s, versus the 240s reveal) and look like labelled rewards:
 
-Failing that, labels need a source outside `EE.log`: manual annotation after each fissure (fine for a pilot); Warframe API inventory diffing (also recovers the unlogged selection, but not the rejected options); or OCR of the reveal screen (the only source holding all four items).
+```
+/Lotus/Types/Game/Projections/T2VoidProjectionCalibanPrimeCPlatinum
+/Lotus/Types/Game/Projections/T2VoidProjectionGyrePrimeFBronze
+/Lotus/Types/Game/Projections/T2VoidProjectionLavosPrimeBBronze
+/Lotus/Types/Game/Projections/T2VoidProjectionProteaPrimeABronze
+```
+
+Four paths, four players, each naming a Prime item and a rarity tier — it fits. It is wrong. These are the relics the squad **equipped**, not what those relics rolled. A relic is a container that can drop any of several parts, so its name says nothing about the outcome. The verifying run confirms this directly: the reward actually taken was a Gauss Prime Chassis, and Gauss appears nowhere among the four projections. The `Bronze`/`Platinum` suffix is the *relic's* tier, not the reward's rarity.
+
+Nothing in `EE.log` states any reward's rarity. Labels therefore need an outside source: manual annotation after each fissure (fine for a pilot); Warframe API inventory diffing (also recovers the unlogged selection, but not the rejected options); or OCR of the reveal screen (the only source holding all four items).
 
 None of this changes M3. It is the strongest argument for per-line events: the timestamps land in the archive now, and item labels from another source can be joined onto them later. Collapsing the sequence would make this permanently unrecoverable.
 
