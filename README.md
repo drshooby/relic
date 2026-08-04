@@ -221,6 +221,31 @@ Two durable notes for anyone touching the parser:
 - **Absence of a game-specific line is not evidence about its format** unless the session actually contained that activity. Check what the session *did* before concluding what the log *can't* do.
 - `EE.log` is truncated on every game launch, so the evidence is perishable. The 8,217-line session is gone; copy the file somewhere outside the repo before relaunching if it matters.
 
+### A test double that models the API's shape but not its contracts
+
+The hot path shipped with 35 passing tests and would have written **zero events** in production.
+
+`game_time_s` was passed to DynamoDB as a Python float. boto3's resource layer rejects that outright — `TypeError: Float types are not supported. Use Decimal types instead.` — because DynamoDB's Number type is exact decimal and boto3 refuses to guess what precision a binary float was supposed to mean. Almost every log line carries a game clock, so almost every record would have raised. Worse, it fails *deterministically*: the event source mapping's `bisect_batch_on_function_error` exists to isolate one poison record, but when every record is poison, bisecting just subdivides its way to the DLQ. From the operator's side everything looks healthy — records leave, Firehose archives them to S3, and the serving layer is simply always empty.
+
+A second bug hid the same way: two copies of one `(session_id, seq)` in a single batch make `BatchWriteItem` reject **all 25 items in the chunk**, not just the duplicate. That is reachable in normal operation, since Kinesis is at-least-once and the operator re-sends a whole buffered batch after a failed flush.
+
+Both bugs had the same root cause, and it was not the production code. The hand-rolled DynamoDB fake modelled the *shape* of boto3's API — the right method names, the right call signatures — but none of its *contracts*:
+
+| Real boto3 | The fake |
+|---|---|
+| raises `TypeError` on any float | stored it happily |
+| rejects duplicate keys in one batch | silently overwrote (dict-keyed!) |
+| buffers, flushes at 25 or `__exit__` | raised on the first `put_item` |
+
+The fake's dict-keyed storage is the detail worth staring at. Keying stored items by `(session_id, seq)` looks like faithfully modelling a DynamoDB table — and it silently implemented the *opposite* of the real API's duplicate behaviour. A test asserting "3 records in, 3 items stored" passed for the wrong reason.
+
+There was even a test named `test_build_event_item_preserves_float_precision` asserting `item["game_time_s"] == 240.623`. It didn't just miss the bug; it **pinned it in place**. Any attempt to fix the type would have broken a green test.
+
+The fix was to make the fake enforce all three contracts, then watch eleven previously-passing tests fail. Two general rules came out of it:
+
+- **A fake is only as good as the contract it enforces, not the interface it mimics.** When faking a third-party client, encode what it *rejects*, not just what it accepts. The rejections are the part your code has never been tested against.
+- **Verify one real call before trusting a suite of fake ones.** A single `TypeSerializer().serialize(item)` against real boto3 — no AWS account, no network — would have caught this on day one. The E2E harness would have caught it too; it was deferred, which is exactly why the cheap local check mattered.
+
 ## Notes & constraints
 
 - EE.log facts (verified against a real session, which corrected several claims the community wiki makes): truncated on every game launch; writes can lag ~10s (engine buffering); header contains the absolute launch time, which anchors every relative timestamp to UTC — the key to cross-source fusion later.
