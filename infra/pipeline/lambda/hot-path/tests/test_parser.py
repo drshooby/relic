@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 from parser import parse
 
@@ -30,3 +33,22 @@ def test_non_reward_lines_fall_through_to_log_line(raw):
     event_type, attrs = parse(raw)
     assert event_type == "log.line"
     assert attrs == {}
+
+
+FIXTURE = Path(__file__).parent / "testdata" / "reward_sequence.jsonl"
+
+
+def test_full_reveal_sequence_yields_exactly_one_reward_event():
+    envelopes = [json.loads(line) for line in FIXTURE.read_text().splitlines() if line]
+    types = [parse(e["raw"])[0] for e in envelopes]
+
+    # Only the player's own roll carries an item path. Every surrounding
+    # coordination line must fall through -- squadmate arrivals included.
+    assert types.count("reward.relic") == 1
+    assert types.count("log.line") == len(envelopes) - 1
+
+    reward_idx = types.index("reward.relic")
+    _, attrs = parse(envelopes[reward_idx]["raw"])
+    assert attrs["item_name"] == "FulminPrimeBarrel"
+    # The reveal onset precedes the reward, so timing is preserved per line.
+    assert envelopes[0]["game_time_s"] < envelopes[reward_idx]["game_time_s"]
