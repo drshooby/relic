@@ -11,4 +11,13 @@ resource "aws_lambda_function" "hot_path" {
   role             = aws_iam_role.hot_path_lambda_role.arn
   handler          = "main.lambda_handler"
   runtime          = "python3.12"
+
+  # Table names reach the handler as env vars rather than being hardcoded, so
+  # the Python has no knowledge of Terraform naming.
+  environment {
+    variables = {
+      EVENTS_TABLE   = aws_dynamodb_table.events.name
+      SESSIONS_TABLE = aws_dynamodb_table.sessions.name
+    }
+  }
 }

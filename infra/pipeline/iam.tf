@@ -172,3 +172,33 @@ resource "aws_iam_role_policy_attachment" "hot_path_dlq_write_attach" {
   role       = aws_iam_role.hot_path_lambda_role.name
   policy_arn = aws_iam_policy.hot_path_dlq_write.arn
 }
+
+# Write-only: the hot path produces the serving layer, it never reads it back.
+# The dashboard's read API gets its own role with Query/GetItem when it is built.
+resource "aws_iam_policy" "hot_path_ddb_write" {
+  name        = "relic-hot-path-ddb-write-policy"
+  description = "Allows the hot-path Lambda to write parsed events and session state"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:BatchWriteItem"
+        ]
+        Resource = [
+          aws_dynamodb_table.events.arn,
+          aws_dynamodb_table.sessions.arn
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "hot_path_ddb_write_attach" {
+  role       = aws_iam_role.hot_path_lambda_role.name
+  policy_arn = aws_iam_policy.hot_path_ddb_write.arn
+}
