@@ -1,7 +1,20 @@
 data "archive_file" "hot_path_func_files" {
-  type        = "zip"
-  source_file = "${path.module}/lambda/hot-path/main.py"
-  output_path = "${path.module}/lambda/hot-path/main.zip"
+  type = "zip"
+  # source_dir, not source_file: the handler imports parser.py and items.py,
+  # and a single-file zip would deploy fine and then ImportError at cold start.
+  source_dir  = "${path.module}/lambda/hot-path"
+  output_path = "${path.module}/lambda/hot-path.zip"
+
+  # Tests, tooling, and caches must not ship to Lambda. output_path sits
+  # outside source_dir so the archive never tries to include itself.
+  excludes = [
+    "tests",
+    "pyproject.toml",
+    "uv.lock",
+    "__pycache__",
+    ".pytest_cache",
+    ".venv",
+  ]
 }
 
 resource "aws_lambda_function" "hot_path" {
