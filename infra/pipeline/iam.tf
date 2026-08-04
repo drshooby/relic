@@ -97,8 +97,8 @@ resource "aws_iam_role_policy_attachment" "firehose_logging_attach" {
   policy_arn = aws_iam_policy.firehose_logging.arn
 }
 
-resource "aws_iam_role" "firehose_lambda_role" {
-  name = "relic-lambda-role"
+resource "aws_iam_role" "hot_path_lambda_role" {
+  name = "relic-hot-path-lambda-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -117,7 +117,58 @@ resource "aws_iam_role" "firehose_lambda_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "firehose_lambda_basic" {
-  role       = aws_iam_role.firehose_lambda_role.name
+resource "aws_iam_role_policy_attachment" "hot_path_lambda_basic" {
+  role       = aws_iam_role.hot_path_lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# The event source mapping polls Kinesis using the *function's* role, so these
+# permissions live here rather than on a separate poller identity.
+resource "aws_iam_policy" "hot_path_kinesis_read" {
+  name        = "relic-hot-path-kinesis-read-policy"
+  description = "Allows the hot-path Lambda's event source mapping to consume the stream"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "kinesis:DescribeStream",
+          "kinesis:DescribeStreamSummary",
+          "kinesis:GetShardIterator",
+          "kinesis:GetRecords",
+          "kinesis:ListShards"
+        ]
+        Resource = [aws_kinesis_stream.relic_stream.arn]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "hot_path_kinesis_read_attach" {
+  role       = aws_iam_role.hot_path_lambda_role.name
+  policy_arn = aws_iam_policy.hot_path_kinesis_read.arn
+}
+
+# Writing a failure record to the DLQ is also done by the mapping under this role.
+resource "aws_iam_policy" "hot_path_dlq_write" {
+  name        = "relic-hot-path-dlq-write-policy"
+  description = "Allows the hot-path event source mapping to report exhausted batches to SQS"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = [aws_sqs_queue.hot_path_dlq.arn]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "hot_path_dlq_write_attach" {
+  role       = aws_iam_role.hot_path_lambda_role.name
+  policy_arn = aws_iam_policy.hot_path_dlq_write.arn
 }
