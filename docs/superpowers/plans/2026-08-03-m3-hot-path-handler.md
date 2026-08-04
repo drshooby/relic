@@ -648,6 +648,23 @@ def test_malformed_envelope_is_skipped_not_raised(fake_ddb, monkeypatch):
     assert len(fake_ddb.Table(EVENTS_TABLE).items) == 1
 
 
+@pytest.mark.parametrize("missing_field", ["session_id", "seq", "raw", "v"])
+def test_envelope_missing_any_required_field_is_skipped(
+    fake_ddb, monkeypatch, missing_field
+):
+    monkeypatch.setattr(main, "_resource", lambda: fake_ddb)
+    incomplete = _envelope(1)
+    del incomplete[missing_field]
+    event = {"Records": [_record(incomplete), _record(_envelope(2))]}
+
+    # build_event_item indexes raw and v directly, so validating only
+    # session_id/seq would let a KeyError escape and crash the whole batch --
+    # sending good records to the DLQ because one was malformed.
+    main.lambda_handler(event, None)
+
+    assert len(fake_ddb.Table(EVENTS_TABLE).items) == 1
+
+
 def test_all_records_malformed_writes_nothing_and_does_not_raise(fake_ddb, monkeypatch):
     monkeypatch.setattr(main, "_resource", lambda: fake_ddb)
     bad = {"kinesis": {"data": base64.b64encode(b"garbage").decode()}}
@@ -724,6 +741,10 @@ from items import build_event_item, build_session_update
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# Every field build_event_item indexes directly. Validating all of them here
+# means the builder can use plain [] lookups without raising mid-batch.
+REQUIRED_FIELDS = ("session_id", "seq", "raw", "v")
+
 _ddb = None
 
 
@@ -751,11 +772,18 @@ def _decode(record: dict) -> dict | None:
         logger.error("undecodable record, skipping: %s", err)
         return None
 
-    if "session_id" not in envelope or "seq" not in envelope:
-        logger.error(
-            "envelope missing session_id/seq, skipping: keys=%s",
-            sorted(envelope) if isinstance(envelope, dict) else type(envelope),
-        )
+    if not isinstance(envelope, dict):
+        logger.error("envelope is not an object, skipping: %s", type(envelope))
+        return None
+
+    # All four are required: build_event_item indexes raw and v directly, so a
+    # missing one would raise KeyError mid-batch and crash records that are
+    # otherwise fine -- turning a bad record into an infrastructure failure and
+    # burning DLQ retries. Validating here keeps the "malformed -> log and
+    # skip" contract in one place.
+    missing = [k for k in REQUIRED_FIELDS if k not in envelope]
+    if missing:
+        logger.error("envelope missing %s, skipping", ",".join(missing))
         return None
     return envelope
 
