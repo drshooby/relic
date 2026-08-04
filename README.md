@@ -71,6 +71,10 @@ Turn the raw S3 archive into a real analytical layer: Glue catalog, JSON→Parqu
 
 Second producer: EEG headset (hardware TBD). High-frequency continuous signal alongside sparse discrete game events — clock alignment across sources, windowed aggregation (e.g., 1s band-power buckets), and a dashboard timeline that overlays brain state on gameplay events.
 
+The relic reward reveal is the anchor event, and it turns out to be **two** events ~113–285ms apart: your own roll landing (absolute evaluation — "is my drop good?") and squadmates' rolls loading (relative re-evaluation — "is mine good *compared to theirs*?"). Same item, potentially opposite valence, independently randomized. That is a natural 2×2 the game generates for free.
+
+Stage one is fully available today. Stage two is **blocked on labelling, not timing**: `EE.log` records when squadmates' rewards arrive but not what they were, and unlabelled trials cannot be averaged. Recovering the labels needs a source outside the log — manual annotation, Warframe API inventory diffing, or OCR of the reveal screen. The hot path stores one event per line specifically so those labels can be joined onto timestamps already in the archive.
+
 ### Phase 4 — Consumer upgrade (optional)
 
 Swap the hot-path Lambda for a real stream-processing consumer (Flink or KCL), spun up per-session to keep costs near zero. Same data, heavier machinery — a deliberate compare-and-contrast with the serverless consumer model.

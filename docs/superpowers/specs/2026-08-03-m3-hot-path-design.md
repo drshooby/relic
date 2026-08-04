@@ -84,6 +84,27 @@ Aggregation is a one-way door. Collapsing asserts the 464ms of choreography is n
 
 Synthesizing a single event would also require the handler to hold state across records, which is unsound: records arrive out of order and batches can be retried.
 
+### Why the granularity matters: two-stage reward evaluation
+
+The reveal is not one moment but two, and the log timestamps them separately:
+
+```
+240.623   your own roll lands       -> absolute evaluation ("is my drop good?")
+240.736 \
+240.764  |  squadmates' rolls load  -> relative re-evaluation ("is mine good
+240.908 /                              *compared to theirs*?")
+```
+
+Stage two is a distinct cognitive event. The reward itself does not change; its value does, because value becomes reference-dependent once comparisons exist. A mediocre drop feels acceptable until three better ones appear beside it.
+
+The design is unusually clean because the two stages are **independently randomized**, yielding a natural 2x2 (own roll good/bad x squad rolls better/worse) where the same item can carry opposite valence. The 113-285ms separation is wide enough to window the stages independently.
+
+**This is currently blocked by a data limit, not a design choice.** Squadmates' rolls arrive without item paths, so stage-two *onset* is known but stage-two *condition* is not — and trials that cannot be labelled cannot be averaged. Stage one is fully available today.
+
+Recovering stage-two labels needs a source outside `EE.log`, in rough order of effort: manual annotation after each fissure (fine for a pilot); inventory diffing via the Warframe API (also recovers the unlogged selection, but not the rejected options); screen capture with OCR of the reveal screen (the only source holding all four items).
+
+None of this changes M3. It is the strongest argument for per-line events: the timestamps land in the archive now, and item labels from another source can be joined onto them later. Collapsing the sequence would make this permanently unrecoverable.
+
 ## DynamoDB item shape
 
 ```python
