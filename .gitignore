@@ -48,3 +48,9 @@ EE.log
 **/EE.log
 
 *.zip
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
