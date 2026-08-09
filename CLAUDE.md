@@ -2,7 +2,15 @@
 
 Personal data-infra project: stream Warframe `EE.log` (+ EEG later) → Kinesis → S3/DynamoDB → live dashboard. Read [README.md](README.md) for the story and roadmap; the authoritative phase-1 design is [docs/superpowers/specs/2026-07-21-relic-phase1-design.md](docs/superpowers/specs/2026-07-21-relic-phase1-design.md).
 
-**Status:** Phase 1, M2 complete. The full path is **verified end-to-end** across two live sessions: the operator tails `EE.log`, redacts IPs, batches envelopes with `PutRecords`, and both sessions landed in S3 as valid newline-delimited JSON with every `seq` present exactly once — no loss, no duplicates. **Redaction is confirmed against real peer addresses**: a matchmade session (828 `Net` lines) produced 481 redactions across 384 lines, with zero addresses surviving. Records arrive out of `seq` order in the object (expected; `PutRecords` and Firehose do not preserve order), so consumers must sort by `(session_id, seq)` and never by file position. Next: M3's hot-path Lambda.
+**Status:** Phase 1, M3 complete. Both paths are **verified end-to-end** against live sessions. Cold path: the operator tails `EE.log`, redacts IPs, batches envelopes with `PutRecords`, and sessions land in S3 as valid newline-delimited JSON with every `seq` present exactly once — no loss, no duplicates. **Redaction is confirmed against real peer addresses** (481 redactions across 384 lines in one matchmade session; 217 in another, none surviving either time). Hot path: a live fissure session produced 6,332 items in `relic-events`, an empty DLQ, and a correctly parsed `reward.relic`. Records arrive out of `seq` order in the object (expected; `PutRecords` and Firehose do not preserve order), so consumers must sort by `(session_id, seq)` and never by file position. Next: M4's read API and dashboard.
+
+**Hot-path invariants that fail silently — do not "simplify" these:**
+
+- `seq` is a zero-padded string of width 20. Unpadded writes succeed and land in the wrong sort position with no error anywhere.
+- `game_time_s` must be `Decimal(str(x))`. boto3 rejects Python floats outright, and `Decimal(x)` reintroduces the binary artifact. Getting this wrong DLQs every batch deterministically while the pipeline looks healthy.
+- `expires_at` is UNIX **seconds**. Milliseconds put expiry ~50,000 years out and the item is never swept.
+- Items must be deduped on `(session_id, seq)` before `BatchWriteItem` — a duplicate key fails all 25 items in the chunk, and at-least-once delivery makes duplicates normal.
+- DynamoDB write failures must **raise**. That is what triggers bisect/retry/DLQ; swallowing them loses data silently.
 
 ## PII — treat game logs as sensitive
 
