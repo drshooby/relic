@@ -62,7 +62,8 @@ Rules, no exceptions:
 
 ## Conventions
 
-- Languages: Go (`operator/`), Python (`pipeline/`), TypeScript (`dashboard/`). Keep each component in its directory; they communicate only via the stream/tables/API, never by importing each other.
+- Languages: Go (`operator/`), Python (Lambda handlers), TypeScript (`dashboard/`). Keep each component in its directory; they communicate only via the stream/tables/API, never by importing each other.
+- **Lambda source lives beside the Terraform that packages it**: `infra/pipeline/lambda/<function>/`. `archive_file` then uses a clean relative path instead of `${path.module}/../../`, and the function's code, tests, and packaging are one unit. There is no top-level `pipeline/` directory.
 - TDD: tests first; sanitized fixtures only.
 - The game runs on **this Mac** via CrossOver — operator code must build/run natively on macOS (arm64).
 

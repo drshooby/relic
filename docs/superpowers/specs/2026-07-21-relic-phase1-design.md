@@ -83,7 +83,7 @@ One JSON record per log line:
   (dt from `wall_time_utc`, via Firehose dynamic partitioning on the envelope.)
 - Delivery failures land under `errors/` in the same bucket rather than vanishing.
 
-### 5. Hot path (`pipeline/hot-path/`, Python Lambda)
+### 5. Hot path (`infra/pipeline/lambda/hot-path/`, Python Lambda)
 
 - Event source mapping on the stream (batch size ~100, `bisect_batch_on_function_error`, SQS DLQ, `maximum_retry_attempts` bounded so a poison record can't wedge the shard).
 - Parses `raw` → `{event_type, subsystem, level, attrs}`. Starting vocabulary: `session.start`, `mission.start`, `mission.end`, and `log.line` as the catch-all — **a bad line is data, not an error**; the parser vocabulary grows over time (and phase 2's replay tool re-derives history with each new parser version).
@@ -97,7 +97,7 @@ One JSON record per log line:
   - `relic-sessions` table — one item per session (`session_id`, `started_at`, `last_seen_at`, counts), TTL ~7d, so the dashboard can find the active/recent sessions cheaply.
 - DynamoDB is a **rolling cache**, not the archive. On-demand capacity; effectively $0 at this volume.
 
-### 6. Dashboard (`dashboard/` + `pipeline/api/`)
+### 6. Dashboard (`dashboard/` + `infra/pipeline/lambda/api/`)
 
 - Read API: API Gateway (HTTP API) + Python Lambda. Endpoints: list recent sessions; get events for a session since a given `seq`.
 - Next.js app polls the API ~2s during a live session; renders the session timeline / event feed. WebSockets are a possible later upgrade; polling is fine for a single user.

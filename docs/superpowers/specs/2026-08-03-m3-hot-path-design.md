@@ -39,7 +39,7 @@ Relic rewards appear **only in Void Fissure missions**. Their absence from an or
 
 ## Architecture
 
-Three modules under `infra/pipeline/lambda/hot-path/`. The location is a deliberate deviation from phase-1 §5's `pipeline/hot-path/`: keeping the source beside the Terraform that packages it lets `archive_file` use a clean relative path, where a sibling top-level directory would need `${path.module}/../../`. Revisit if the hot path ever becomes its own Terraform module.
+Three modules under `infra/pipeline/lambda/hot-path/`. Lambda source lives beside the Terraform that packages it — `infra/pipeline/lambda/<function>/` — so `archive_file` uses a clean relative path where a sibling top-level directory would need `${path.module}/../../`. Every Lambda in this project follows that layout.
 
 ```
 main.py     handler: decode batch -> parse -> write. The only module importing boto3.
