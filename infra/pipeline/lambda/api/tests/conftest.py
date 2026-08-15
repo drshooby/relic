@@ -21,6 +21,7 @@ class FakeTable:
         # list of plain dicts; the fake sorts on read the way DynamoDB does
         self.items = list(items or [])
         self.queries = []
+        self.get_item_calls = 0
 
     def query(self, **kwargs):
         self.queries.append(kwargs)
@@ -39,6 +40,7 @@ class FakeTable:
         return {"Items": rows, "Count": len(rows)}
 
     def get_item(self, Key):
+        self.get_item_calls += 1
         for i in self.items:
             if all(i.get(k) == v for k, v in Key.items()):
                 return {"Item": i}
