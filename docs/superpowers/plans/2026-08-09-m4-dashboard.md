@@ -932,7 +932,6 @@ Stop and report. Do not run `git add` or `git commit`.
 ### Task 5: Dashboard test harness, path alias, and types
 
 **Files:**
-- Create: `dashboard/vitest.config.ts`
 - Create: `dashboard/src/types.ts`
 - Modify: `dashboard/package.json` (add `test` scripts and dev deps)
 - Modify: `dashboard/tsconfig.app.json` (add the `@/*` path alias)
@@ -958,11 +957,16 @@ bun add -D vitest jsdom @testing-library/react @testing-library/dom @testing-lib
 Add to `compilerOptions`, keeping every existing option:
 
 ```json
-"baseUrl": ".",
 "paths": {
   "@/*": ["./src/*"]
 }
 ```
+
+**Do NOT add `baseUrl`.** This scaffold runs TypeScript 6.0.3, where `baseUrl`
+is deprecated and errors out: `TS5101: Option 'baseUrl' is deprecated and will
+stop functioning in TypeScript 7.0`. Under `moduleResolution: "bundler"`,
+`paths` resolves relative to the tsconfig's own directory, so `baseUrl` is
+unnecessary as well as fatal.
 
 - [ ] **Step 3: Add the matching alias to `vite.config.ts`**
 
