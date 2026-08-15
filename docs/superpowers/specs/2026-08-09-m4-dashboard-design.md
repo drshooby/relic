@@ -90,26 +90,28 @@ Same split as the hot path, for the same reason: `queries.py` and `responses.py`
 
 **IAM:** a new role, read-only — `dynamodb:Query`, `GetItem`, `Scan` on the two table ARNs. The hot path's role stays write-only. Neither function can do the other's job.
 
-**CORS:** `allow_origins = ["http://localhost:3000"]`, methods `["GET"]`. Phase 1 runs the dashboard locally, so a wildcard buys nothing. Note CORS is a browser-only control and is not what makes the API private — the API has no auth (§6 of the phase-1 design), so `curl` works regardless. The real mitigations are that it exists only while the pipeline is applied and serves a 24h rolling cache. A deployed origin gets added when one exists.
+**CORS:** `allow_origins = ["http://localhost:5173"]`, methods `["GET"]`. Phase 1 runs the dashboard locally, so a wildcard buys nothing. Note CORS is a browser-only control and is not what makes the API private — the API has no auth (§6 of the phase-1 design), so `curl` works regardless. The real mitigations are that it exists only while the pipeline is applied and serves a 24h rolling cache. A deployed origin gets added when one exists.
 
 **`Decimal` is a real trap on the way out.** DynamoDB returns Numbers as `decimal.Decimal`, and `json.dumps` raises `TypeError` on it. `responses.py` must convert. This is the mirror image of the hot path's float bug — the same type boundary, failing in the opposite direction.
 
 ## Dashboard (`dashboard/`)
 
-Next.js 16.3, React 19.2, bun, App Router, CSS Modules. **Read [dashboard/AGENTS.md](../../../dashboard/AGENTS.md) before writing components** — this Next.js differs from older versions and `node_modules/next/dist/docs/` is authoritative over training data.
+Vite 8, React 19.2, TypeScript 6, bun, CSS Modules, `src/` layout. No server: the dashboard is a static bundle that talks only to the HTTP API, which is why a SPA fits better than a server framework here.
 
 ```
-components/
-  SessionList/        sessions sidebar; live badge; selection
-  SessionHeader/      id, duration, state chip (alive/downed/dead/expired)
-  ReviveButton/       downed + dead only; bleed-out count
-  EventFeed/          the scrolling list
-  EventRow/           one event; reward.relic styled distinctly
-  ExpiredCard/        summary when events aged out
-lib/
-  api.ts              typed fetch wrappers; 204/404 handled here
-  useSessionFeed.ts   the hook and its state machine
-types.ts              Session, RelicEvent, FeedState
+src/
+  components/
+    SessionList/        sessions sidebar; live badge; selection
+    SessionHeader/      id, duration, state chip (alive/downed/dead/expired)
+    ReviveButton/       downed + dead only; bleed-out count
+    EventFeed/          the scrolling list
+    EventRow/           one event; reward.relic styled distinctly
+    ExpiredCard/        summary when events aged out
+  lib/
+    api.ts              typed fetch wrappers; 204/404 handled here
+    useSessionFeed.ts   the hook and its state machine
+  types.ts              Session, RelicEvent, FeedState
+  App.tsx               composes the layout
 ```
 
 Every component is a directory with `Component.tsx`, `Component.module.css`, and an `index.tsx` re-export — the re-export is what makes `@/components/Foo` resolve. `lib/` and `types.ts` sit outside `components/` because they are not components.
@@ -118,9 +120,9 @@ Every component is a directory with `Component.tsx`, `Component.module.css`, and
 
 **All fetching is client-side**, against API Gateway directly. The revive mechanic is inherently client state — a gesture, a counter, a cursor — and routing it through a server would split that across a boundary for nothing. It also implies no server, which matches the project's cost discipline.
 
-**The API URL comes from `NEXT_PUBLIC_RELIC_API_URL`.** Local dev reads `.env.local`; a future static build injects it at build time; a future Vercel deploy sets it in project settings. Same code either way. The value should be read from the SSM parameter the pipeline writes rather than copy-pasted, since the gateway URL changes on every apply.
+**The API URL comes from `VITE_RELIC_API_URL`.** Local dev reads `.env.local`; a future static build injects it at build time; a future Vercel deploy sets it in project settings. Same code either way. The value should be read from the SSM parameter the pipeline writes rather than copy-pasted, since the gateway URL changes on every apply.
 
-**Deployment is out of scope.** Phase 1 runs `bun dev` locally: the dashboard is only useful at this Mac while the game is running, and the API only exists while the pipeline is applied. Both are torn down together.
+**Deployment is out of scope.** Phase 1 runs `bun run dev` locally: the dashboard is only useful at this Mac while the game is running, and the API only exists while the pipeline is applied. Both are torn down together.
 
 ## Error handling
 
@@ -139,7 +141,7 @@ Python, following the hot path: `queries.py` and `responses.py` are pure and tes
 
 Cases that matter: `since` filtering is exclusive; an empty result yields 204 and not `200 []`; an unknown session yields 404; the 20-cap holds; a `Decimal` from DynamoDB serializes without raising.
 
-TypeScript: **Vitest**, chosen over Jest because this scaffold is ESM throughout (`next.config.ts`) and Vitest is ESM-native, with fake timers suited to the state machine. Next 16 documents Cypress, Playwright, Vitest, and Jest without recommending one.
+TypeScript: **Vitest**, which is Vite's own test runner — it reads `vite.config.ts`, so the `@/*` alias is defined once and shared by the app and the tests. Its fake timers are what make the revive state machine testable.
 
 `useSessionFeed` gets real tests with fake timers and a mocked fetch: 204 starts the quiet timer; 30s of 204s triggers exactly **one** auto-revive; a network error does **not** transition to dead; manual revive from dead sends exactly one request; dead stops the interval.
 

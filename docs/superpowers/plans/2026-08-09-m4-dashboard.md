@@ -4,9 +4,9 @@
 
 **Goal:** A dashboard that streams the live session feed while you play, and says plainly when a session's events have aged out.
 
-**Architecture:** A read-only Python Lambda behind an HTTP API serves two endpoints from the M3 DynamoDB tables. A Next.js 16 app polls it client-side every 2s, with a downed/dead revive mechanic that stops polling a session that has gone quiet. All fetching is client-side; there is no server component to the dashboard.
+**Architecture:** A read-only Python Lambda behind an HTTP API serves two endpoints from the M3 DynamoDB tables. A Vite + React SPA polls it every 2s, with a downed/dead revive mechanic that stops polling a session that has gone quiet. There is no server: the dashboard is a static bundle that talks only to the HTTP API.
 
-**Tech Stack:** Python 3.12 (Lambda), Terraform (`aws_apigatewayv2_*`), Next.js 16.3 + React 19.2 + TypeScript (dashboard), bun (package manager), Vitest + React Testing Library, CSS Modules.
+**Tech Stack:** Python 3.12 (Lambda), Terraform (`aws_apigatewayv2_*`), Vite 8 + React 19.2 + TypeScript 6 (dashboard, `src/` layout), bun (package manager), Vitest + React Testing Library, CSS Modules.
 
 ## Global Constraints
 
@@ -15,11 +15,13 @@
 - **The API is read-only.** Its IAM role gets `dynamodb:Query`, `GetItem`, `Scan` on the two table ARNs and nothing else. The hot-path role stays write-only. Never widen either.
 - **`Decimal` must be converted before `json.dumps`.** DynamoDB returns Numbers as `decimal.Decimal` and `json.dumps` raises `TypeError` on it. This is the mirror of M3's float bug.
 - **`seq` is a zero-padded string of width 20**, passed through verbatim. Never parse it to an int and re-pad client-side.
-- **CORS `allow_origins = ["http://localhost:3000"]`**, methods `["GET"]`. Not a wildcard.
+- **CORS `allow_origins = ["http://localhost:5173"]`**, methods `["GET"]`. Not a wildcard. **5173 is Vite's dev-server port** (Next's was 3000) — a mismatch here fails every browser request with an opaque CORS error while `curl` keeps working, which is a genuinely confusing way to lose an afternoon.
 - **Package manager is bun.** Not npm, not pnpm. `bun add`, `bun run`.
-- **This Next.js is 16.3 with React 19.2 and differs from older versions.** `dashboard/node_modules/next/dist/docs/` is authoritative over training data. Note `app/layout.tsx` already uses the Next-16 global type `LayoutProps<"/">` — do not "fix" it to `{ children }: { children: React.ReactNode }`.
+- **Vite 8 + React 19.2 + TypeScript 6, `src/` layout.** No Next.js, no `"use client"` directives, no App Router. The scaffold enables the React Compiler via `@rolldown/plugin-babel`; leave that config alone.
+- **`verbatimModuleSyntax: true` is set.** Type-only imports MUST use `import type { Foo }`. A plain `import { Foo }` for a type is a compile error, not a warning.
+- **`noUnusedLocals` and `noUnusedParameters` are set.** An unused import or destructured variable fails `bun run build`.
 - **Every component is a directory**: `Component/Component.tsx` (named export), `Component/Component.module.css`, `Component/index.tsx` re-exporting. No exceptions, including one-off children.
-- **`lib/` and `types.ts` live at the `dashboard/` root**, not inside `components/` — they are not components.
+- **`lib/` and `types.ts` live at `dashboard/src/`**, not inside `components/` — they are not components.
 - **Never commit real log content.** Fixtures use fabricated player ids (`player0000`), never values from a real session.
 
 ---
@@ -36,11 +38,11 @@
 | `infra/pipeline/iam.tf` (modify) | Read-only role and policy for the API Lambda. |
 | `infra/pipeline/lambda.tf` (modify) | `archive_file` + `aws_lambda_function` for the API. |
 | `infra/pipeline/outputs.tf` | The invoke URL, so the dashboard can read it without console digging. |
-| `dashboard/types.ts` | `Session`, `RelicEvent`, `FeedState`. |
-| `dashboard/lib/api.ts` | Typed fetch wrappers; 204/404 handled here. |
-| `dashboard/lib/useSessionFeed.ts` | The polling hook and revive state machine. |
-| `dashboard/components/*/` | Six components, each its own directory. |
-| `dashboard/app/page.tsx` (replace) | Composes the layout. |
+| `dashboard/src/types.ts` | `Session`, `RelicEvent`, `FeedState`. |
+| `dashboard/src/lib/api.ts` | Typed fetch wrappers; 204/404 handled here. |
+| `dashboard/src/lib/useSessionFeed.ts` | The polling hook and revive state machine. |
+| `dashboard/src/components/*/` | Six components, each its own directory. |
+| `dashboard/src/App.tsx` (replace) | Composes the layout. |
 
 ---
 
@@ -93,7 +95,7 @@ from decimal import Decimal
 
 from responses import json_default, no_content, not_found, ok
 
-CORS_ORIGIN = "http://localhost:3000"
+CORS_ORIGIN = "http://localhost:5173"
 
 
 def test_ok_returns_200_with_json_body_and_cors():
@@ -157,7 +159,7 @@ Create `infra/pipeline/lambda/api/responses.py`:
 """API Gateway v2 proxy responses. Pure: no AWS, no I/O.
 
 Every response carries CORS headers. The browser calls this API from
-http://localhost:3000, a different origin from execute-api, so without them
+http://localhost:5173, a different origin from execute-api, so without them
 the fetch fails before the handler's status code is ever read.
 """
 
@@ -166,7 +168,7 @@ from decimal import Decimal
 
 # Phase 1 runs the dashboard locally. Not a wildcard: CORS is what stops other
 # sites' JS from reading your session telemetry while the pipeline is applied.
-CORS_ORIGIN = "http://localhost:3000"
+CORS_ORIGIN = "http://localhost:5173"
 
 _HEADERS = {
     "Content-Type": "application/json",
@@ -843,13 +845,13 @@ resource "aws_apigatewayv2_api" "relic_api" {
   name          = "relic-api"
   protocol_type = "HTTP"
 
-  # The browser calls this from http://localhost:3000, a different origin, so
+  # The browser calls this from http://localhost:5173, a different origin, so
   # without CORS the fetch fails before any status code is read. Not a
   # wildcard: this is what stops another site's JS from reading session
   # telemetry while the pipeline is applied. CORS is browser-only and is NOT
   # what makes the API private -- there is no auth, by design (phase-1 §6).
   cors_configuration {
-    allow_origins = ["http://localhost:3000"]
+    allow_origins = ["http://localhost:5173"]
     allow_methods = ["GET"]
     allow_headers = ["content-type"]
     max_age       = 300
@@ -899,7 +901,7 @@ resource "aws_lambda_permission" "api_gateway" {
 
 ```hcl
 output "api_invoke_url" {
-  description = "Base URL for the read API. Put this in dashboard/.env.local as NEXT_PUBLIC_RELIC_API_URL."
+  description = "Base URL for the read API. Put this in dashboard/.env.local as VITE_RELIC_API_URL."
   value       = aws_apigatewayv2_stage.default.invoke_url
 }
 ```
@@ -927,44 +929,78 @@ Stop and report. Do not run `git add` or `git commit`.
 
 ---
 
-### Task 5: Dashboard test harness and types
+### Task 5: Dashboard test harness, path alias, and types
 
 **Files:**
-- Create: `dashboard/vitest.config.mts`
-- Create: `dashboard/types.ts`
-- Modify: `dashboard/package.json` (add `test` script and dev deps)
+- Create: `dashboard/vitest.config.ts`
+- Create: `dashboard/src/types.ts`
+- Modify: `dashboard/package.json` (add `test` scripts and dev deps)
+- Modify: `dashboard/tsconfig.app.json` (add the `@/*` path alias)
+- Modify: `dashboard/vite.config.ts` (add the matching resolve alias)
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `bun run test` works; and the types `Session`, `RelicEvent`, `FeedState`, `EventsResponse`, `SessionsResponse`.
+- Produces: `bun run test` works; `@/…` resolves in both the app and tests; and the types `Session`, `RelicEvent`, `FeedState`, `EventsResponse`, `SessionsResponse`.
+
+**The scaffold has NO `@/*` alias.** It must be added in two places: `tsconfig.app.json` so the typechecker resolves it, and `vite.config.ts` so the bundler does. TypeScript `paths` alone does not make Vite resolve anything at build time.
 
 - [ ] **Step 1: Install dev dependencies**
 
 Run from `dashboard/`:
 ```bash
-bun add -D vitest @vitejs/plugin-react jsdom @testing-library/react @testing-library/dom vite-tsconfig-paths
+bun add -D vitest jsdom @testing-library/react @testing-library/dom @testing-library/jest-dom
 ```
 
-These are the exact packages Next 16's own Vitest guide lists (`node_modules/next/dist/docs/01-app/02-guides/testing/vitest.md`).
+`@vitejs/plugin-react` is already installed by the scaffold, and Vite is its own toolchain, so no `vite-tsconfig-paths` bridging is needed — the alias below is shared by the app and the test run.
 
-- [ ] **Step 2: Create `vitest.config.mts`**
+- [ ] **Step 2: Add the `@/*` alias to `tsconfig.app.json`**
+
+Add to `compilerOptions`, keeping every existing option:
+
+```json
+"baseUrl": ".",
+"paths": {
+  "@/*": ["./src/*"]
+}
+```
+
+- [ ] **Step 3: Add the matching alias to `vite.config.ts`**
+
+Replace the file, preserving the React Compiler setup the scaffold ships:
 
 ```ts
-import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
-import tsconfigPaths from "vite-tsconfig-paths";
+import { fileURLToPath, URL } from "node:url";
 
+import { defineConfig } from "vite";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+import babel from "@rolldown/plugin-babel";
+
+// https://vite.dev/config/
 export default defineConfig({
-  // tsconfigPaths is what makes the "@/*" alias resolve in tests the same way
-  // it does in the app.
-  plugins: [tsconfigPaths(), react()],
+  plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
+  resolve: {
+    // Must mirror the "paths" entry in tsconfig.app.json. TypeScript paths
+    // only inform the typechecker; the bundler needs its own alias.
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   test: {
     environment: "jsdom",
+    globals: true,
   },
 });
 ```
 
-- [ ] **Step 3: Add the test script to `package.json`**
+Note: `test` lives in the Vite config rather than a separate `vitest.config.ts`, so the alias is defined exactly once. Vitest reads `vite.config.ts` when no dedicated config exists.
+
+To make TypeScript accept the `test` key, the config file needs Vitest's type reference. Add this as the FIRST line of `vite.config.ts`:
+
+```ts
+/// <reference types="vitest/config" />
+```
+
+- [ ] **Step 4: Add test scripts to `package.json`**
 
 Add to `"scripts"`, keeping the existing entries:
 
@@ -973,9 +1009,9 @@ Add to `"scripts"`, keeping the existing entries:
 "test:watch": "vitest"
 ```
 
-`vitest run` is non-watching, so it terminates in CI and in agent runs. Bare `vitest` watches forever.
+`vitest run` is non-watching, so it terminates in CI and in agent runs. Bare `vitest` watches forever and would hang an automated run.
 
-- [ ] **Step 4: Create `types.ts`**
+- [ ] **Step 5: Create `src/types.ts`**
 
 ```ts
 /** One play session, as returned by GET /sessions. */
@@ -1019,22 +1055,39 @@ export interface EventsResponse {
 export type FeedState = "alive" | "downed" | "dead" | "expired" | "error";
 ```
 
-- [ ] **Step 5: Verify the harness runs**
+- [ ] **Step 6: Verify the alias and harness both work**
+
+Create a throwaway `src/lib/alias.test.ts`:
+
+```ts
+import { expect, it } from "vitest";
+
+import type { FeedState } from "@/types";
+
+it("resolves the @ alias", () => {
+  const state: FeedState = "alive";
+  expect(state).toBe("alive");
+});
+```
 
 Run: `cd dashboard && bun run test`
-Expected: Vitest starts and reports "No test files found" (exit code may be non-zero — that is fine, it proves the runner works).
+Expected: PASS — 1 test. If it fails to resolve `@/types`, the alias is wrong in one of the two places from Steps 2-3.
 
-- [ ] **Step 6: Report for review (DO NOT COMMIT)**
+Then delete the throwaway file: `rm src/lib/alias.test.ts`
+
+- [ ] **Step 7: Verify the typechecker is still clean**
+
+Run: `cd dashboard && bun run build`
+Expected: succeeds. This runs `tsc -b` first, which is what proves the tsconfig alias is valid.
+
+- [ ] **Step 8: Report for review (DO NOT COMMIT)**
 
 Stop and report. Do not run `git add` or `git commit`.
-
----
-
 ### Task 6: API client (`lib/api.ts`)
 
 **Files:**
-- Create: `dashboard/lib/api.ts`
-- Test: `dashboard/lib/api.test.ts`
+- Create: `dashboard/src/lib/api.ts`
+- Test: `dashboard/src/lib/api.test.ts`
 
 **Interfaces:**
 - Consumes: types from Task 5.
@@ -1045,7 +1098,7 @@ Stop and report. Do not run `git add` or `git commit`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `dashboard/lib/api.test.ts`:
+Create `dashboard/src/lib/api.test.ts`:
 
 ```ts
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1055,7 +1108,7 @@ import { SessionGoneError, fetchEvents, fetchSessions } from "@/lib/api";
 const BASE = "https://example.execute-api.us-east-1.amazonaws.com";
 
 beforeEach(() => {
-  vi.stubEnv("NEXT_PUBLIC_RELIC_API_URL", BASE);
+  vi.stubEnv("VITE_RELIC_API_URL", BASE);
 });
 
 afterEach(() => {
@@ -1138,7 +1191,7 @@ Expected: FAIL — cannot resolve `@/lib/api`.
 
 - [ ] **Step 3: Write the implementation**
 
-Create `dashboard/lib/api.ts`:
+Create `dashboard/src/lib/api.ts`:
 
 ```ts
 import type { EventsResponse, Session, SessionsResponse } from "@/types";
@@ -1157,10 +1210,10 @@ export class SessionGoneError extends Error {
 }
 
 function baseUrl(): string {
-  const url = process.env.NEXT_PUBLIC_RELIC_API_URL;
+  const url = import.meta.env.VITE_RELIC_API_URL;
   if (!url) {
     throw new Error(
-      "NEXT_PUBLIC_RELIC_API_URL is not set. Get it from `terraform output api_invoke_url` in infra/pipeline and put it in dashboard/.env.local",
+      "VITE_RELIC_API_URL is not set. Get it from `terraform output api_invoke_url` in infra/pipeline and put it in dashboard/.env.local",
     );
   }
   return url.replace(/\/$/, "");
@@ -1219,8 +1272,8 @@ Stop and report. Do not run `git add` or `git commit`.
 ### Task 7: The polling hook and revive state machine
 
 **Files:**
-- Create: `dashboard/lib/useSessionFeed.ts`
-- Test: `dashboard/lib/useSessionFeed.test.ts`
+- Create: `dashboard/src/lib/useSessionFeed.ts`
+- Test: `dashboard/src/lib/useSessionFeed.test.ts`
 
 **Interfaces:**
 - Consumes: `fetchEvents`, `SessionGoneError` (Task 6); types (Task 5).
@@ -1228,7 +1281,7 @@ Stop and report. Do not run `git add` or `git commit`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `dashboard/lib/useSessionFeed.test.ts`:
+Create `dashboard/src/lib/useSessionFeed.test.ts`:
 
 ```ts
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -1405,11 +1458,9 @@ Expected: FAIL — cannot resolve `@/lib/useSessionFeed`.
 
 - [ ] **Step 3: Write the implementation**
 
-Create `dashboard/lib/useSessionFeed.ts`:
+Create `dashboard/src/lib/useSessionFeed.ts`:
 
 ```ts
-"use client";
-
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SessionGoneError, fetchEvents } from "@/lib/api";
@@ -1549,9 +1600,9 @@ Stop and report. Do not run `git add` or `git commit`.
 ### Task 8: Event display components
 
 **Files:**
-- Create: `dashboard/components/EventRow/{EventRow.tsx,EventRow.module.css,index.tsx}`
-- Create: `dashboard/components/EventFeed/{EventFeed.tsx,EventFeed.module.css,index.tsx}`
-- Test: `dashboard/components/EventRow/EventRow.test.tsx`
+- Create: `dashboard/src/components/EventRow/{EventRow.tsx,EventRow.module.css,index.tsx}`
+- Create: `dashboard/src/components/EventFeed/{EventFeed.tsx,EventFeed.module.css,index.tsx}`
+- Test: `dashboard/src/components/EventRow/EventRow.test.tsx`
 
 **Interfaces:**
 - Consumes: `RelicEvent` (Task 5).
@@ -1559,7 +1610,7 @@ Stop and report. Do not run `git add` or `git commit`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `dashboard/components/EventRow/EventRow.test.tsx`:
+Create `dashboard/src/components/EventRow/EventRow.test.tsx`:
 
 ```tsx
 import { render, screen } from "@testing-library/react";
@@ -1621,7 +1672,7 @@ Expected: FAIL — cannot resolve `@/components/EventRow`.
 
 - [ ] **Step 3: Write `EventRow`**
 
-`dashboard/components/EventRow/EventRow.tsx`:
+`dashboard/src/components/EventRow/EventRow.tsx`:
 
 ```tsx
 import type { RelicEvent } from "@/types";
@@ -1652,7 +1703,7 @@ export function EventRow({ event }: { event: RelicEvent }) {
 }
 ```
 
-`dashboard/components/EventRow/EventRow.module.css`:
+`dashboard/src/components/EventRow/EventRow.module.css`:
 
 ```css
 .row {
@@ -1696,7 +1747,7 @@ export function EventRow({ event }: { event: RelicEvent }) {
 }
 ```
 
-`dashboard/components/EventRow/index.tsx`:
+`dashboard/src/components/EventRow/index.tsx`:
 
 ```tsx
 export { EventRow } from "./EventRow";
@@ -1704,7 +1755,7 @@ export { EventRow } from "./EventRow";
 
 - [ ] **Step 4: Write `EventFeed`**
 
-`dashboard/components/EventFeed/EventFeed.tsx`:
+`dashboard/src/components/EventFeed/EventFeed.tsx`:
 
 ```tsx
 import { EventRow } from "@/components/EventRow";
@@ -1731,7 +1782,7 @@ export function EventFeed({ events }: { events: RelicEvent[] }) {
 
 Note the key is `session_id:seq` — the project's idempotency key, and the only pair guaranteed unique.
 
-`dashboard/components/EventFeed/EventFeed.module.css`:
+`dashboard/src/components/EventFeed/EventFeed.module.css`:
 
 ```css
 .feed {
@@ -1752,7 +1803,7 @@ Note the key is `session_id:seq` — the project's idempotency key, and the only
 }
 ```
 
-`dashboard/components/EventFeed/index.tsx`:
+`dashboard/src/components/EventFeed/index.tsx`:
 
 ```tsx
 export { EventFeed } from "./EventFeed";
@@ -1772,11 +1823,11 @@ Stop and report. Do not run `git add` or `git commit`.
 ### Task 9: Session chrome components
 
 **Files:**
-- Create: `dashboard/components/SessionList/{SessionList.tsx,SessionList.module.css,index.tsx}`
-- Create: `dashboard/components/SessionHeader/{SessionHeader.tsx,SessionHeader.module.css,index.tsx}`
-- Create: `dashboard/components/ReviveButton/{ReviveButton.tsx,ReviveButton.module.css,index.tsx}`
-- Create: `dashboard/components/ExpiredCard/{ExpiredCard.tsx,ExpiredCard.module.css,index.tsx}`
-- Test: `dashboard/components/ReviveButton/ReviveButton.test.tsx`
+- Create: `dashboard/src/components/SessionList/{SessionList.tsx,SessionList.module.css,index.tsx}`
+- Create: `dashboard/src/components/SessionHeader/{SessionHeader.tsx,SessionHeader.module.css,index.tsx}`
+- Create: `dashboard/src/components/ReviveButton/{ReviveButton.tsx,ReviveButton.module.css,index.tsx}`
+- Create: `dashboard/src/components/ExpiredCard/{ExpiredCard.tsx,ExpiredCard.module.css,index.tsx}`
+- Test: `dashboard/src/components/ReviveButton/ReviveButton.test.tsx`
 
 **Interfaces:**
 - Consumes: `Session`, `FeedState` (Task 5).
@@ -1788,7 +1839,7 @@ Stop and report. Do not run `git add` or `git commit`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `dashboard/components/ReviveButton/ReviveButton.test.tsx`:
+Create `dashboard/src/components/ReviveButton/ReviveButton.test.tsx`:
 
 ```tsx
 import { render, screen } from "@testing-library/react";
@@ -1837,11 +1888,9 @@ Expected: FAIL — cannot resolve `@/components/ReviveButton`.
 
 - [ ] **Step 3: Write `ReviveButton`**
 
-`dashboard/components/ReviveButton/ReviveButton.tsx`:
+`dashboard/src/components/ReviveButton/ReviveButton.tsx`:
 
 ```tsx
-"use client";
-
 import type { FeedState } from "@/types";
 
 import styles from "./ReviveButton.module.css";
@@ -1873,7 +1922,7 @@ export function ReviveButton({ state, reviveCount, onRevive }: Props) {
 }
 ```
 
-`dashboard/components/ReviveButton/ReviveButton.module.css`:
+`dashboard/src/components/ReviveButton/ReviveButton.module.css`:
 
 ```css
 .wrap {
@@ -1910,7 +1959,7 @@ export function ReviveButton({ state, reviveCount, onRevive }: Props) {
 }
 ```
 
-`dashboard/components/ReviveButton/index.tsx`:
+`dashboard/src/components/ReviveButton/index.tsx`:
 
 ```tsx
 export { ReviveButton } from "./ReviveButton";
@@ -1918,11 +1967,9 @@ export { ReviveButton } from "./ReviveButton";
 
 - [ ] **Step 4: Write `SessionList`**
 
-`dashboard/components/SessionList/SessionList.tsx`:
+`dashboard/src/components/SessionList/SessionList.tsx`:
 
 ```tsx
-"use client";
-
 import type { Session } from "@/types";
 
 import styles from "./SessionList.module.css";
@@ -1967,7 +2014,7 @@ export function SessionList({ sessions, selectedId, onSelect }: Props) {
 }
 ```
 
-`dashboard/components/SessionList/SessionList.module.css`:
+`dashboard/src/components/SessionList/SessionList.module.css`:
 
 ```css
 .list {
@@ -2023,7 +2070,7 @@ export function SessionList({ sessions, selectedId, onSelect }: Props) {
 }
 ```
 
-`dashboard/components/SessionList/index.tsx`:
+`dashboard/src/components/SessionList/index.tsx`:
 
 ```tsx
 export { SessionList } from "./SessionList";
@@ -2031,7 +2078,7 @@ export { SessionList } from "./SessionList";
 
 - [ ] **Step 5: Write `SessionHeader`**
 
-`dashboard/components/SessionHeader/SessionHeader.tsx`:
+`dashboard/src/components/SessionHeader/SessionHeader.tsx`:
 
 ```tsx
 import type { FeedState, Session } from "@/types";
@@ -2069,7 +2116,7 @@ export function SessionHeader({
 }
 ```
 
-`dashboard/components/SessionHeader/SessionHeader.module.css`:
+`dashboard/src/components/SessionHeader/SessionHeader.module.css`:
 
 ```css
 .header {
@@ -2118,7 +2165,7 @@ export function SessionHeader({
 }
 ```
 
-`dashboard/components/SessionHeader/index.tsx`:
+`dashboard/src/components/SessionHeader/index.tsx`:
 
 ```tsx
 export { SessionHeader } from "./SessionHeader";
@@ -2126,7 +2173,7 @@ export { SessionHeader } from "./SessionHeader";
 
 - [ ] **Step 6: Write `ExpiredCard`**
 
-`dashboard/components/ExpiredCard/ExpiredCard.tsx`:
+`dashboard/src/components/ExpiredCard/ExpiredCard.tsx`:
 
 ```tsx
 import type { Session } from "@/types";
@@ -2155,7 +2202,7 @@ export function ExpiredCard({ session }: { session: Session }) {
 }
 ```
 
-`dashboard/components/ExpiredCard/ExpiredCard.module.css`:
+`dashboard/src/components/ExpiredCard/ExpiredCard.module.css`:
 
 ```css
 .card {
@@ -2184,7 +2231,7 @@ export function ExpiredCard({ session }: { session: Session }) {
 }
 ```
 
-`dashboard/components/ExpiredCard/index.tsx`:
+`dashboard/src/components/ExpiredCard/index.tsx`:
 
 ```tsx
 export { ExpiredCard } from "./ExpiredCard";
@@ -2201,18 +2248,18 @@ Stop and report. Do not run `git add` or `git commit`.
 
 ---
 
-### Task 10: Page composition and env wiring
+### Task 10: App composition and env wiring
 
 **Files:**
-- Replace: `dashboard/app/page.tsx`
-- Replace: `dashboard/app/page.module.css`
+- Replace: `dashboard/src/App.tsx`
+- Replace: `dashboard/src/App.css` → delete, replaced by `dashboard/src/App.module.css`
 - Create: `dashboard/.env.local.example`
-- Modify: `dashboard/app/layout.tsx` (metadata only)
-- Modify: `dashboard/.gitignore` (ensure `.env.local` is ignored)
+- Modify: `dashboard/index.html` (page title)
+- Verify: `dashboard/.gitignore` ignores `.env.local`
 
 **Interfaces:**
 - Consumes: every component from Tasks 8-9, `useSessionFeed` (Task 7), `fetchSessions` (Task 6).
-- Produces: the working page.
+- Produces: the working app.
 
 - [ ] **Step 1: Create `.env.local.example`**
 
@@ -2221,19 +2268,20 @@ Stop and report. Do not run `git add` or `git commit`.
 #   cd infra/pipeline && terraform output -raw api_invoke_url
 # The URL changes on every apply, because the pipeline is destroyed between
 # play sessions.
-NEXT_PUBLIC_RELIC_API_URL=https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com
+#
+# Vite only exposes variables prefixed with VITE_ to client code. A variable
+# without that prefix is silently undefined in the browser -- no error.
+VITE_RELIC_API_URL=https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com
 ```
 
 - [ ] **Step 2: Confirm `.env.local` is git-ignored**
 
 Run: `cd dashboard && git check-ignore -v .env.local`
-Expected: a match from the scaffold's `.gitignore` (it ships `.env*`). If there is no match, append `.env.local` to `dashboard/.gitignore`.
+Expected: a match (the Vite scaffold's `.gitignore` ships `*.local`). If there is no match, append `.env.local` to `dashboard/.gitignore` before continuing — the API URL should not land in git.
 
-- [ ] **Step 3: Replace `app/page.tsx`**
+- [ ] **Step 3: Replace `src/App.tsx`**
 
 ```tsx
-"use client";
-
 import { useCallback, useEffect, useState } from "react";
 
 import { EventFeed } from "@/components/EventFeed";
@@ -2245,9 +2293,16 @@ import { fetchSessions } from "@/lib/api";
 import { useSessionFeed } from "@/lib/useSessionFeed";
 import type { Session } from "@/types";
 
-import styles from "./page.module.css";
+import styles from "./App.module.css";
 
-export default function Home() {
+/**
+ * The session list refreshes far less often than the event feed: a new
+ * session_id only appears when the game restarts, so polling it every 2s
+ * would be wasted requests.
+ */
+const SESSION_LIST_INTERVAL_MS = 10000;
+
+export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -2267,9 +2322,7 @@ export default function Home() {
 
   useEffect(() => {
     void loadSessions();
-    // Refresh the list every 10s: far less often than the event feed, since a
-    // new session_id only appears when the game restarts.
-    const id = setInterval(() => void loadSessions(), 10000);
+    const id = setInterval(() => void loadSessions(), SESSION_LIST_INTERVAL_MS);
     return () => clearInterval(id);
   }, [loadSessions]);
 
@@ -2315,7 +2368,7 @@ export default function Home() {
 }
 ```
 
-- [ ] **Step 4: Replace `app/page.module.css`**
+- [ ] **Step 4: Create `src/App.module.css` and delete `src/App.css`**
 
 ```css
 .page {
@@ -2327,7 +2380,7 @@ export default function Home() {
 }
 
 .sidebar {
-  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  border-right: 1px solid rgba(128, 128, 128, 0.3);
   padding-right: 1rem;
 }
 
@@ -2363,31 +2416,32 @@ export default function Home() {
 
   .sidebar {
     border-right: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
     padding-right: 0;
     padding-bottom: 1rem;
   }
 }
 ```
 
-- [ ] **Step 5: Update the page metadata in `app/layout.tsx`**
+Then: `rm dashboard/src/App.css`
 
-Replace only the `metadata` export, leaving fonts and `LayoutProps<"/">` untouched:
+If `src/main.tsx` imports `./App.css`, remove that import line — a dangling import fails the build.
 
-```ts
-export const metadata: Metadata = {
-  title: "relic",
-  description: "Live Warframe session feed",
-};
-```
+- [ ] **Step 5: Set the page title in `index.html`**
 
-- [ ] **Step 6: Verify the build and tests**
+Replace the `<title>` element's text with `relic`.
+
+- [ ] **Step 6: Verify tests and build**
 
 Run:
 ```bash
 cd dashboard && bun run test && bun run build
 ```
-Expected: all tests pass, and the build succeeds. The build proves the components typecheck together, which the unit tests alone do not.
+Expected: all tests pass, and the build succeeds. The build runs `tsc -b` first, which is what proves the components typecheck together — the unit tests alone do not, since each mounts one component in isolation.
+
+Watch for two failures specific to this scaffold's tsconfig:
+- `noUnusedLocals` — any leftover import fails the build.
+- `verbatimModuleSyntax` — a type imported without `import type` fails the build.
 
 - [ ] **Step 7: Report for review (DO NOT COMMIT)**
 
@@ -2410,7 +2464,7 @@ cd dashboard && bun run build                                     # task 10
 
 ## Out of scope
 
-- Deployment (S3, Vercel, containers). Phase 1 is `bun dev` locally.
+- Deployment (S3, Vercel, containers). Phase 1 is `bun run dev` locally.
 - Auth on the API.
 - Item path → display-name mapping (`GyrePrimeSystemsBlueprint` → "Gyre Prime Systems Blueprint").
 - Historical browsing past the 24h/7d TTLs — phase 2's Athena work.
