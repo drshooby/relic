@@ -19,7 +19,7 @@ EE.log ──(Go operator, local)──▶ Kinesis Data Stream
                                      ├─▶ Firehose ──▶ S3 raw archive   (cold path: source of truth, replayable)
                                      └─▶ Lambda (parse/clean) ──▶ DynamoDB rolling cache   (hot path: live view)
                                                                        ▲
-                                     Dashboard (Next.js + API) ────────┘  ~2s polling during a session
+                                     Dashboard (Vite/React + API) ─────┘  ~2s polling during a session
 ```
 
 - **Cold path** stores every raw line untouched in Hive-partitioned S3 — the permanent, replayable record.
@@ -45,7 +45,11 @@ infra/data/                        infra/pipeline/
              versioned, closed       firehose.tf   Kinesis source → S3, 60s buffer
   ssm.tf     /relic/data/            s3.tf         data source (read-only)
              bucket_name             ssm.tf        reads the shared param
-  iam.tf     (no principals)         iam.tf        one Firehose role, two policies
+  iam.tf     (no principals)         dynamodb.tf   events + sessions, TTL'd
+                                     hot_path.tf   event source mapping + DLQ
+                                     api.tf        HTTP API, 2 routes
+                                     lambda.tf     hot-path + api functions
+                                     iam.tf        one role each, all scoped
 ```
 
 The pipeline holds the bucket as a **data source**, never a managed resource. That's the load-bearing detail: an `import` block or a `resource "aws_s3_bucket"` here would enroll the persistent bucket in the stack that gets destroyed between sessions.
@@ -61,7 +65,7 @@ The serverless streaming backbone described above.
 - **M1** ✅ — Go operator tails the real EE.log through a live play session (truncation-safe, offline, envelopes to stdout, IPs redacted at the source)
 - **M2** ✅ — operator → Kinesis → Firehose → S3, verified end-to-end against two live sessions (11,629 and 7,876 lines). Every `seq` present exactly once in both: no loss, no duplicates, every line independently parseable. IP redaction is confirmed against real peer addresses — a matchmade session produced 481 redactions across 384 lines with none surviving. The operator batches with `PutRecords` (500 records / 4MB / one poll tick, whichever comes first), retries only the individually-failed records with exponential backoff, and reads its stream name from SSM. Records arrive out of `seq` order in the object — `PutRecords` and Firehose preserve neither, which is exactly why `(session_id, seq)` is the ordering key rather than file position.
 - **M3** ✅ — Hot-path Lambda parses into DynamoDB, verified end-to-end against a live fissure session: 6,332 events in `relic-events`, an empty DLQ, and the relic reward parsed correctly (`reward.relic`, `GyrePrimeSystemsBlueprint`, `game_time_s` 186.318). Both paths agree — the same session landed in S3 as 4,278 valid NDJSON lines, seq 0–4277 with zero gaps and 217 redactions with none surviving. A `seq BETWEEN` query returned the full 21-line reveal window in order, separating stage one (your roll, +109ms) from stage two (squadmates' rolls, +149ms) — the two-stage split the per-line design exists to preserve. `event_count` read 6,372 against 6,332 stored: the documented at-least-once drift, ~0.6%, observed rather than assumed.
-- **M4** — Custom dashboard shows the live session feed
+- **M4** ✅ — Read API (API Gateway HTTP API + read-only Lambda) and a Vite + React dashboard polling it every 2s. Verified against the live stack: `GET /sessions` returns 200, an unknown session 404, and a session whose events aged out returns 204 with no body — the three codes the UI's live/recent/expired states are inferred from, with no extra stored field. The dashboard borrows the game's downed/dead mechanic for the case a log goes quiet: after 30s it spends one silent auto-revive, then prompts, and a session confirmed finished stops polling entirely rather than hammering the API while you have walked away.
 
 ### Phase 2 — Lakehouse & replay
 
