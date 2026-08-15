@@ -20,6 +20,7 @@
 - **Vite 8 + React 19.2 + TypeScript 6, `src/` layout.** No Next.js, no `"use client"` directives, no App Router. The scaffold enables the React Compiler via `@rolldown/plugin-babel`; leave that config alone.
 - **`verbatimModuleSyntax: true` is set.** Type-only imports MUST use `import type { Foo }`. A plain `import { Foo }` for a type is a compile error, not a warning.
 - **`noUnusedLocals` and `noUnusedParameters` are set.** An unused import or destructured variable fails `bun run build`.
+- **The React Compiler is enabled and its lint rules are enforced** (`bun run lint` must exit 0). Two rules bite in this codebase: no impure calls during render (`Date.now()` as a `useRef` initializer is an error — it runs on every render), and no synchronous `setState` in an effect body (derive during render or use the previous-value-in-a-ref pattern instead). Run `bun run lint` as well as `bun run test` and `bun run build` before reporting a task done.
 - **Every component is a directory**: `Component/Component.tsx` (named export), `Component/Component.module.css`, `Component/index.tsx` re-exporting. No exceptions, including one-off children.
 - **`lib/` and `types.ts` live at `dashboard/src/`**, not inside `components/` — they are not components.
 - **Never commit real log content.** Fixtures use fabricated player ids (`player0000`), never values from a real session.
