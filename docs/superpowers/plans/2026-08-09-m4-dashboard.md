@@ -1663,8 +1663,12 @@ describe("EventRow", () => {
 
   it("renders without a game clock", () => {
     // Lines logged before the header is parsed carry no timestamp at all.
-    const { game_time_s, ...noClock } = base;
-    render(<EventRow event={noClock as RelicEvent} />);
+    // `delete` rather than destructuring-to-discard: this ESLint config has no
+    // varsIgnorePattern, so `const { game_time_s, ...rest }` trips
+    // @typescript-eslint/no-unused-vars and would need a disable comment.
+    const noClock: RelicEvent = { ...base };
+    delete noClock.game_time_s;
+    render(<EventRow event={noClock} />);
     expect(screen.getByText(/something happened/)).toBeDefined();
   });
 });
