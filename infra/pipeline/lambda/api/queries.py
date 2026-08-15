@@ -10,6 +10,16 @@ from boto3.dynamodb.conditions import Key
 # trivially small result set.
 MAX_SESSIONS = 20
 
+# DynamoDB caps a Query page at 1MB. A real session has recorded 6,332 events
+# with raw log lines attached, which is reachable within that cap -- an
+# unbounded query would silently truncate with no error and no signal that
+# anything was dropped. Capping with Limit instead fits the polling model
+# already in place: the client's cursor (last_seq) naturally picks up the
+# remainder on its next poll a couple seconds later, so a bounded page is
+# invisible to the user rather than a bug. 500 is comfortably under the 1MB
+# ceiling even for events carrying a full raw line.
+EVENTS_PAGE_LIMIT = 500
+
 
 def get_events(table, session_id: str, since: str | None) -> list[dict]:
     """Events for one session, ascending by seq, exclusive of `since`.
@@ -17,6 +27,9 @@ def get_events(table, session_id: str, since: str | None) -> list[dict]:
     `since` is the zero-padded seq string the client was last given. It is
     passed straight through -- never parsed to an int and re-padded, because
     an unpadded comparison silently matches the wrong range.
+
+    Capped at EVENTS_PAGE_LIMIT per call (see comment above) -- callers must
+    not assume this returns the entire backlog after `since`.
     """
     condition = Key("session_id").eq(session_id)
     if since:
@@ -24,7 +37,11 @@ def get_events(table, session_id: str, since: str | None) -> list[dict]:
 
     # ScanIndexForward=True is the default, but stated explicitly: the feed
     # depends on ascending order, and a silent flip would render backwards.
-    response = table.query(KeyConditionExpression=condition, ScanIndexForward=True)
+    response = table.query(
+        KeyConditionExpression=condition,
+        ScanIndexForward=True,
+        Limit=EVENTS_PAGE_LIMIT,
+    )
     return response.get("Items", [])
 
 

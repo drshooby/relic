@@ -41,6 +41,19 @@ export function useSessionFeed(sessionId: string | null): FeedResult {
   const lastEventAt = useRef<number>(0);
   const autoRevived = useRef(false);
 
+  // Bumped every time the selected session changes (see the ref-reset effect
+  // below). A poll captures the generation it was issued under and, when its
+  // promise resolves, discards the result if the generation has since moved
+  // on. Without this, a poll in flight for a just-deselected session resolves
+  // late and writes a DIFFERENT session's events into state and -- worse --
+  // that session's last_seq into cursor.current, which then permanently
+  // skips every event below that seq on the next real poll. A boolean
+  // "cancelled" flag is not enough: it has to be checked at both write sites
+  // (setEvents AND cursor.current), and it has to be per-request, not
+  // per-effect, because a request already in flight when sessionId changes
+  // is not stopped by the interval's own cleanup.
+  const generation = useRef(0);
+
   // Reset state whenever the selected session CHANGES -- including changing
   // to null (deselecting a session must not leave the previous session's
   // events on screen). This is the documented "adjust state during render"
@@ -78,6 +91,7 @@ export function useSessionFeed(sessionId: string | null): FeedResult {
   // already stopped by the guard in the polling effect below, and whichever
   // real session id arrives next re-arms everything from this same effect.
   useEffect(() => {
+    generation.current += 1;
     cursor.current = undefined;
     autoRevived.current = false;
     if (sessionId) {
@@ -88,9 +102,23 @@ export function useSessionFeed(sessionId: string | null): FeedResult {
   const poll = useCallback(async (): Promise<boolean> => {
     if (!sessionId) return false;
 
+    // Captured BEFORE the await: this is the generation the request was
+    // issued under. If the user switches sessions while this request is in
+    // flight, the ref-reset effect above bumps generation.current, and the
+    // comparison after the await below then correctly identifies this
+    // result as stale.
+    const myGeneration = generation.current;
+    const isStale = () => generation.current !== myGeneration;
+
     try {
       const result = await fetchEvents(sessionId, cursor.current);
+      if (isStale()) return false;
+      // Clear a prior transport error on ANY successful response, including
+      // a 204 (result === null) -- otherwise the error banner disappears
+      // (setError(null) below) while the state chip is stuck reading
+      // "error", since only the events branch used to reset state.
       setError(null);
+      setState((prev) => (prev === "error" ? "alive" : prev));
 
       if (result && result.events.length > 0) {
         setEvents((prev) => [...prev, ...result.events]);
@@ -102,6 +130,7 @@ export function useSessionFeed(sessionId: string | null): FeedResult {
       }
       return false;
     } catch (err) {
+      if (isStale()) return false;
       if (err instanceof SessionGoneError) {
         setState("expired");
         return false;
@@ -134,17 +163,25 @@ export function useSessionFeed(sessionId: string | null): FeedResult {
       const found = await poll();
       if (cancelled || found) return;
 
-      if (Date.now() - lastEventAt.current >= QUIET_THRESHOLD_MS) {
-        if (!autoRevived.current) {
-          // Spend one free revive before ever prompting, so a brief gap
-          // self-heals without the user touching anything.
-          autoRevived.current = true;
-          const recovered = await poll();
-          if (!cancelled && !recovered) {
-            setState("downed");
-          }
-          return;
-        }
+      const quietFor = Date.now() - lastEventAt.current;
+      if (quietFor < QUIET_THRESHOLD_MS) return;
+
+      if (!autoRevived.current) {
+        // First time crossing the threshold: spend the free revive by
+        // marking it used, but do NOT declare downed yet and do NOT poll
+        // again right now -- an immediate re-poll happens microseconds
+        // after the threshold, which is still mid-loading-screen and buys
+        // nothing. Instead grant a full extra QUIET_THRESHOLD_MS of real
+        // wall-clock time: the next several ticks keep calling poll() at
+        // the normal cadence above, and any of them finding events resets
+        // lastEventAt and autoRevived, returning the feed to alive without
+        // ever showing downed. Only if the session is STILL quiet a full
+        // threshold later does the branch below fire.
+        autoRevived.current = true;
+        return;
+      }
+
+      if (quietFor >= QUIET_THRESHOLD_MS * 2) {
         setState("downed");
       }
     };

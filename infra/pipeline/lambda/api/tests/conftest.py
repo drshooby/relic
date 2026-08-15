@@ -35,9 +35,20 @@ class FakeTable:
             rows = [r for r in rows if r["seq"] > since]
         rows.sort(key=lambda r: r["seq"])
         limit = kwargs.get("Limit")
-        if limit:
-            rows = rows[:limit]
-        return {"Items": rows, "Count": len(rows)}
+        result = {"Items": rows, "Count": len(rows)}
+        if limit and len(rows) > limit:
+            # Real DynamoDB includes LastEvaluatedKey whenever a page was cut
+            # short by Limit (or the 1MB size cap) -- its presence, not the
+            # item count, is what tells a caller more pages exist.
+            truncated = rows[:limit]
+            result["Items"] = truncated
+            result["Count"] = len(truncated)
+            last = truncated[-1]
+            result["LastEvaluatedKey"] = {
+                "session_id": last["session_id"],
+                "seq": last["seq"],
+            }
+        return result
 
     def get_item(self, Key):
         self.get_item_calls += 1

@@ -1,6 +1,6 @@
 from tests.conftest import FakeTable, event_item, session_item
 
-from queries import MAX_SESSIONS, get_events, list_sessions, session_exists
+from queries import EVENTS_PAGE_LIMIT, MAX_SESSIONS, get_events, list_sessions, session_exists
 
 
 def test_get_events_returns_all_when_since_is_none(events_table):
@@ -33,6 +33,32 @@ def test_get_events_ignores_other_sessions(events_table):
 def test_get_events_empty_when_nothing_past_cursor(events_table):
     events_table.items = [event_item("s1", 1)]
     assert get_events(events_table, "s1", f"{1:020d}") == []
+
+
+def test_get_events_caps_at_page_limit(events_table):
+    # A real session hit 6,332 events with raw log lines attached -- well
+    # past what fits in one 1MB DynamoDB page. get_events must bound the
+    # response rather than silently truncating with no signal.
+    events_table.items = [event_item("s1", n) for n in range(EVENTS_PAGE_LIMIT + 50)]
+
+    rows = get_events(events_table, "s1", None)
+
+    assert len(rows) == EVENTS_PAGE_LIMIT
+    # The bound must land the client's next cursor exactly where the page
+    # stopped -- the (n)th item, zero-indexed, is seq n.
+    assert rows[-1]["seq"] == f"{EVENTS_PAGE_LIMIT - 1:020d}"
+
+
+def test_get_events_query_passes_the_page_limit(events_table):
+    events_table.items = [event_item("s1", 1)]
+    get_events(events_table, "s1", None)
+    assert events_table.queries[-1]["Limit"] == EVENTS_PAGE_LIMIT
+
+
+def test_get_events_under_limit_returns_everything(events_table):
+    events_table.items = [event_item("s1", n) for n in range(3)]
+    rows = get_events(events_table, "s1", None)
+    assert len(rows) == 3
 
 
 def test_list_sessions_newest_first(sessions_table):
