@@ -34,3 +34,34 @@ resource "aws_lambda_function" "hot_path" {
     }
   }
 }
+
+data "archive_file" "api_func_files" {
+  type        = "zip"
+  source_dir  = "${path.module}/lambda/api"
+  output_path = "${path.module}/lambda/api.zip"
+
+  excludes = [
+    "tests",
+    "pyproject.toml",
+    "uv.lock",
+    "__pycache__",
+    ".pytest_cache",
+    ".venv",
+  ]
+}
+
+resource "aws_lambda_function" "api" {
+  filename         = data.archive_file.api_func_files.output_path
+  source_code_hash = data.archive_file.api_func_files.output_base64sha256
+  function_name    = "relic-api"
+  role             = aws_iam_role.api_lambda_role.arn
+  handler          = "main.lambda_handler"
+  runtime          = "python3.12"
+
+  environment {
+    variables = {
+      EVENTS_TABLE   = aws_dynamodb_table.events.name
+      SESSIONS_TABLE = aws_dynamodb_table.sessions.name
+    }
+  }
+}

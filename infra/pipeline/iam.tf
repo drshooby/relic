@@ -202,3 +202,60 @@ resource "aws_iam_role_policy_attachment" "hot_path_ddb_write_attach" {
   role       = aws_iam_role.hot_path_lambda_role.name
   policy_arn = aws_iam_policy.hot_path_ddb_write.arn
 }
+
+resource "aws_iam_role" "api_lambda_role" {
+  name = "relic-api-lambda-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+        # lambda.amazonaws.com is a global principal, not account-scoped.
+        # Without this condition any account could assume the role.
+        Condition = {
+          StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "api_lambda_basic" {
+  role       = aws_iam_role.api_lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Read-only, deliberately. The hot-path role is write-only; neither function
+# can do the other's job, so a bug in one cannot corrupt what the other owns.
+resource "aws_iam_policy" "api_ddb_read" {
+  name        = "relic-api-ddb-read-policy"
+  description = "Allows the read API to query events and sessions"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:Query",
+          "dynamodb:GetItem",
+          "dynamodb:Scan"
+        ]
+        Resource = [
+          aws_dynamodb_table.events.arn,
+          aws_dynamodb_table.sessions.arn
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "api_ddb_read_attach" {
+  role       = aws_iam_role.api_lambda_role.name
+  policy_arn = aws_iam_policy.api_ddb_read.arn
+}
