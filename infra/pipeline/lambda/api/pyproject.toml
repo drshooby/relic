@@ -1,0 +1,15 @@
+[project]
+name = "relic-api"
+version = "0.1.0"
+description = "Read API for the relic dashboard"
+requires-python = "==3.12.*"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "boto3>=1.35",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
