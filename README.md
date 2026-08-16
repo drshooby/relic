@@ -71,6 +71,8 @@ The serverless streaming backbone described above.
 
 Turn the raw S3 archive into a real analytical layer: Glue catalog, JSON→Parquet compaction, date/session partitioning, Athena. Build a **replay tool** to reprocess historical raw logs through new parser versions — the payoff of the "store raw everything" decision.
 
+Background reading before the spec: [docs/PHASE2_LEARNING.md](docs/PHASE2_LEARNING.md) — the lakehouse/replay vocabulary from a cloud-infra starting point, and the open question of whether the deployed S3 layout (ingestion-time, no `session_id`) or the spec's (event-time, session-partitioned) is the one phase 2 builds on.
+
 ### Phase 3 — EEG fusion
 
 Second producer: EEG headset (hardware TBD). High-frequency continuous signal alongside sparse discrete game events — clock alignment across sources, windowed aggregation (e.g., 1s band-power buckets), and a dashboard timeline that overlays brain state on gameplay events.
